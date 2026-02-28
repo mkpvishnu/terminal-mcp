@@ -1,11 +1,12 @@
 """Tool handlers for terminal session operations."""
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING
 
 from terminal_mcp.pty_session import KEY_MAP
-from terminal_mcp.output_buffer import truncate_output
+from terminal_mcp.output_buffer import strip_ansi, truncate_output
 from terminal_mcp.config import get_config
 
 if TYPE_CHECKING:
@@ -32,7 +33,8 @@ async def handle_session_create(manager: "SessionManager", arguments: dict) -> d
         }
 
     try:
-        session = manager.create(
+        session = await asyncio.to_thread(
+            manager.create,
             command=command,
             label=arguments.get("label"),
             rows=arguments.get("rows", 24),
@@ -120,9 +122,9 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
                         "message": f"control_char must be one of {sorted(valid_chars)}",
                     },
                 }
-            bytes_sent = session.send_control(control_char)
+            bytes_sent = await asyncio.to_thread(session.send_control, control_char)
         elif input_text is not None:
-            bytes_sent = session.send(input_text, press_enter=press_enter)
+            bytes_sent = await asyncio.to_thread(session.send, input_text, press_enter=press_enter)
         elif key is not None:
             if key not in KEY_MAP:
                 return {
@@ -132,14 +134,14 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
                         "message": f"Unknown key: '{key}'. Valid keys: {sorted(KEY_MAP.keys())}",
                     },
                 }
-            bytes_sent = session.send_key(key)
+            bytes_sent = await asyncio.to_thread(session.send_key, key)
         elif password is not None:
             logger.info("Sending password to session %s (redacted)", session_id)
-            bytes_sent = session.send_password(password)
+            bytes_sent = await asyncio.to_thread(session.send_password, password)
         else:
             # Nothing to send — send a bare enter if press_enter is True
             if press_enter:
-                bytes_sent = session.send("", press_enter=True)
+                bytes_sent = await asyncio.to_thread(session.send, "", press_enter=True)
 
         return {"success": True, "bytes_sent": bytes_sent}
 
@@ -177,22 +179,31 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
 
     mode = arguments.get("mode", "stream")
     timeout = float(arguments.get("timeout", 2.0))
-    strip_ansi = arguments.get("strip_ansi", True)
+    strip_ansi_output = arguments.get("strip_ansi", True)
     scrollback = arguments.get("scrollback")
 
     try:
         if mode == "snapshot":
             if scrollback is not None:
-                output, total_lines = session.read_scrollback(lines_back=scrollback)
+                output, total_lines = await asyncio.to_thread(
+                    session.read_scrollback, lines_back=scrollback
+                )
+                if strip_ansi_output:
+                    output = strip_ansi(output)
                 bytes_read = len(output.encode('utf-8'))
                 prompt_detected = False
             else:
-                output, bytes_read, prompt_detected = session.read_snapshot()
+                output, bytes_read, prompt_detected = await asyncio.to_thread(
+                    session.read_snapshot
+                )
+                if strip_ansi_output:
+                    output = strip_ansi(output)
                 total_lines = None
         else:
-            output, bytes_read, prompt_detected = session.read_stream(
+            output, bytes_read, prompt_detected = await asyncio.to_thread(
+                session.read_stream,
                 timeout=timeout,
-                strip_ansi_output=strip_ansi,
+                strip_ansi_output=strip_ansi_output,
             )
             total_lines = None
 
@@ -233,7 +244,7 @@ async def handle_session_close(manager: "SessionManager", arguments: dict) -> di
         }
 
     try:
-        exit_status = manager.close(session_id)
+        exit_status = await asyncio.to_thread(manager.close, session_id)
         return {
             "success": True,
             "exit_status": exit_status,
@@ -341,24 +352,30 @@ async def handle_session_exec(manager: "SessionManager", arguments: dict) -> dic
     session = None
 
     try:
-        session = manager.create(
+        session = await asyncio.to_thread(
+            manager.create,
             command=shell,
             label=label,
             rows=rows,
             cols=cols,
         )
         # Consume startup output
-        session.read_stream(timeout=1.0)
+        await asyncio.to_thread(session.read_stream, 1.0)
         # Send the command
-        session.send(exec_cmd, press_enter=True)
+        await asyncio.to_thread(session.send, exec_cmd, True)
         # Read the output
-        output, bytes_read, prompt_detected = session.read_stream(timeout=timeout)
+        output, bytes_read, prompt_detected = await asyncio.to_thread(
+            session.read_stream, timeout
+        )
+
+        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
 
         return {
             "success": True,
             "output": output,
             "bytes_read": bytes_read,
             "session_id": session.session_id,
+            "truncated": was_truncated,
         }
     except RuntimeError as e:
         return {
@@ -374,6 +391,6 @@ async def handle_session_exec(manager: "SessionManager", arguments: dict) -> dic
     finally:
         if session is not None:
             try:
-                manager.close(session.session_id)
+                await asyncio.to_thread(manager.close, session.session_id)
             except Exception:
                 pass
