@@ -62,6 +62,20 @@ pip install -e ".[dev]"
 
 Add to `~/.claude.json` (or your project's `.mcp.json`):
 
+**If installed via pip:**
+
+```json
+{
+  "mcpServers": {
+    "terminal": {
+      "command": "terminal-mcp"
+    }
+  }
+}
+```
+
+**If installed from source:**
+
 ```json
 {
   "mcpServers": {
@@ -76,7 +90,7 @@ Add to `~/.claude.json` (or your project's `.mcp.json`):
 }
 ```
 
-Replace `/absolute/path/to/terminal-mcp` with the actual path. Use `which python3` to find your Python binary if needed.
+Replace `/absolute/path/to/terminal-mcp` with the actual path.
 
 ### 3. Use it
 
