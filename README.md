@@ -385,13 +385,14 @@ Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `s
 
 ## Changelog
 
-### v0.3.2
+### v0.3.3
 
 - **Buffer memory cap** — per-session PTY buffer capped at 1MB (configurable via `TERMINAL_MCP_MAX_BUFFER_BYTES`), prevents unbounded memory growth on long-running sessions
 - **Async event loop** — all blocking PTY calls wrapped in `asyncio.to_thread()`, unblocking the event loop for concurrent MCP requests
 - **Snapshot ANSI stripping** — `strip_ansi` parameter now correctly applied in snapshot and scrollback read modes
 - **Exec output truncation** — `session_exec` now applies `max_output_bytes` truncation to prevent context overflow
 - **SIGTERM cleanup** — added signal handler to close all PTY sessions on SIGTERM (Docker stop, `kill`, systemd)
+- **Close race condition** — `close()` now handles pexpect exceptions when child process is already reaped
 - Removed unused `import atexit` from server.py
 
 ### v0.3.1
