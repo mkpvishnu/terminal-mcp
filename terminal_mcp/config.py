@@ -1,5 +1,6 @@
 """Configuration management for terminal-mcp MCP server."""
 
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -17,6 +18,16 @@ class TerminalConfig:
     cleanup_interval: int = 60  # seconds between idle cleanup checks
 
 
+_ENV_MAP = {
+    "TERMINAL_MCP_MAX_SESSIONS": ("max_sessions", int),
+    "TERMINAL_MCP_IDLE_TIMEOUT": ("idle_timeout", int),
+    "TERMINAL_MCP_DEFAULT_ROWS": ("default_rows", int),
+    "TERMINAL_MCP_DEFAULT_COLS": ("default_cols", int),
+    "TERMINAL_MCP_READ_SETTLE_TIMEOUT": ("read_settle_timeout", float),
+    "TERMINAL_MCP_MAX_OUTPUT_BYTES": ("max_output_bytes", int),
+    "TERMINAL_MCP_CLEANUP_INTERVAL": ("cleanup_interval", int),
+}
+
 # Global config singleton
 _config: Optional[TerminalConfig] = None
 
@@ -26,6 +37,13 @@ def get_config() -> TerminalConfig:
     global _config
     if _config is None:
         _config = TerminalConfig()
+        for env_var, (field_name, converter) in _ENV_MAP.items():
+            value = os.environ.get(env_var)
+            if value:
+                try:
+                    setattr(_config, field_name, converter(value))
+                except (ValueError, TypeError):
+                    pass  # invalid values silently ignored
     return _config
 
 
