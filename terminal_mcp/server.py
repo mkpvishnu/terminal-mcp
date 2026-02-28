@@ -1,9 +1,9 @@
 """MCP server entry point for terminal-mcp."""
 
 import asyncio
-import atexit
 import json
 import logging
+import signal
 import sys
 from typing import Any
 
@@ -320,8 +320,18 @@ async def run_server() -> None:
         await app.run(read_stream, write_stream, app.create_initialization_options())
 
 
+def _handle_sigterm(signum, frame):
+    # Ensure all PTY child processes are cleaned up when the server receives SIGTERM
+    # (e.g. from `kill <pid>`, Docker stop, or systemd). The atexit handler in
+    # SessionManager only fires on normal exit, not on SIGTERM.
+    manager = get_manager()
+    manager.close_all()
+    sys.exit(0)
+
+
 def main() -> None:
     """Entry point."""
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     asyncio.run(run_server())
 
 
