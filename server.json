@@ -29,6 +29,13 @@
           "format": "string",
           "isSecret": false,
           "name": "TERMINAL_MCP_IDLE_TIMEOUT"
+        },
+        {
+          "description": "Max per-session buffer bytes (default 1000000)",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "TERMINAL_MCP_MAX_BUFFER_BYTES"
         }
       ]
     }

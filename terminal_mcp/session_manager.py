@@ -58,6 +58,7 @@ class SessionManager:
                 cols=cols,
                 enable_snapshot=enable_snapshot,
                 scrollback_lines=scrollback_lines,
+                max_buffer_bytes=self.config.max_buffer_bytes,
             )
             # Store optional per-session idle timeout
             if idle_timeout is not None:

@@ -3,8 +3,10 @@
 import asyncio
 import json
 import logging
+import os
 import signal
 import sys
+import threading
 from typing import Any
 
 from mcp.server import Server
@@ -324,9 +326,16 @@ def _handle_sigterm(signum, frame):
     # Ensure all PTY child processes are cleaned up when the server receives SIGTERM
     # (e.g. from `kill <pid>`, Docker stop, or systemd). The atexit handler in
     # SessionManager only fires on normal exit, not on SIGTERM.
-    manager = get_manager()
-    manager.close_all()
-    sys.exit(0)
+    # Defer heavy cleanup to a daemon thread to avoid deadlocking from the signal
+    # context (close_all() acquires a threading.Lock and does blocking I/O).
+    def _cleanup_and_exit():
+        try:
+            manager = get_manager()
+            manager.close_all()
+        except Exception:
+            pass
+        os._exit(0)
+    threading.Thread(target=_cleanup_and_exit, daemon=True).start()
 
 
 def main() -> None:

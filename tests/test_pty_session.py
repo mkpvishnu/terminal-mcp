@@ -172,50 +172,50 @@ class TestPTYSessionScrollback:
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY not supported on Windows")
 class TestPTYSessionBufferCap:
-    def test_buffer_stays_capped_under_max(self):
-        cap = 512
+    def test_buffer_stays_capped_via_reader_loop(self):
+        """Exercise the actual _reader_loop trim path by sending data through the PTY."""
+        cap = 4096
         session = PTYSession(command="/bin/cat", max_buffer_bytes=cap)
-        time.sleep(0.1)
+        time.sleep(0.2)  # let /bin/cat start up
 
-        big_data = b"x" * (cap * 3)
-        with session._buffer_lock:
-            session._buffer.extend(big_data)
-            if len(session._buffer) > session._max_buffer_bytes:
-                trim = len(session._buffer) - session._max_buffer_bytes
-                del session._buffer[:trim]
-                if session._read_position >= trim:
-                    session._read_position -= trim
-                else:
-                    session._read_position = 0
+        # Send ~10 KB total — well above the 4 KB cap — in 512-byte chunks
+        chunk = b"x" * 512
+        for _ in range(20):
+            session.process.send(chunk)
+            time.sleep(0.02)
+
+        # Give the reader thread time to process all incoming data
+        time.sleep(0.5)
 
         with session._buffer_lock:
             buf_len = len(session._buffer)
-        assert buf_len <= cap
+            pos = session._read_position
+
+        # Allow one read-chunk (4096 bytes) of overshoot before the trim fires
+        assert buf_len <= cap + 4096, (
+            f"Buffer ({buf_len}) exceeds cap ({cap}) + one read-chunk (4096)"
+        )
+        assert 0 <= pos <= buf_len, (
+            f"read_position ({pos}) is out of range [0, {buf_len}]"
+        )
         session.close()
 
-    def test_read_position_adjusted_after_trim(self):
-        cap = 512
+    def test_read_after_buffer_trim(self):
+        """Verify read_stream() works correctly after the reader loop has trimmed the buffer."""
+        cap = 2048
         session = PTYSession(command="/bin/cat", max_buffer_bytes=cap)
-        time.sleep(0.1)
+        time.sleep(0.2)  # let /bin/cat start up
 
-        with session._buffer_lock:
-            session._buffer.extend(b"a" * 300)
-            session._read_position = 200
+        # Send enough data to force multiple trim cycles
+        chunk = b"y" * 512
+        for _ in range(12):
+            session.process.send(chunk)
+            time.sleep(0.02)
 
-        big_data = b"b" * (cap * 2)
-        with session._buffer_lock:
-            session._buffer.extend(big_data)
-            if len(session._buffer) > session._max_buffer_bytes:
-                trim = len(session._buffer) - session._max_buffer_bytes
-                del session._buffer[:trim]
-                if session._read_position >= trim:
-                    session._read_position -= trim
-                else:
-                    session._read_position = 0
+        # Give the reader thread time to trim
+        time.sleep(0.5)
 
-        with session._buffer_lock:
-            pos = session._read_position
-            buf_len = len(session._buffer)
-        assert buf_len <= cap
-        assert 0 <= pos <= buf_len
+        # read_stream() must not crash and must return a valid string
+        output, bytes_read, _ = session.read_stream(timeout=0.5)
+        assert isinstance(output, str), "read_stream() should return a str"
         session.close()
