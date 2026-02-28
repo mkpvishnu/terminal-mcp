@@ -5,7 +5,7 @@ import re
 # Comprehensive ANSI escape sequence pattern
 ANSI_PATTERN = re.compile(
     r'\x1b\[[0-9;]*[a-zA-Z]'      # CSI sequences: ESC [ ... letter
-    r'|\x1b\][^\x07]*\x07'         # OSC sequences: ESC ] ... BEL
+    r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'  # OSC sequences: ESC ] ... BEL or ST
     r'|\x1b[()][AB012]'            # Charset sequences: ESC ( x
     r'|\x1b\[[\?]?[0-9;]*[hlm]'   # Mode sequences: ESC [ ? ... h/l/m
     r'|\x1b[A-Z]'                  # Single-letter ESC sequences
