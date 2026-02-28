@@ -409,6 +409,50 @@ class TestHandleSessionRead:
         assert result["total_lines"] == 2
         mock_session.read_scrollback.assert_called_once_with(lines_back=10)
 
+    @pytest.mark.asyncio
+    async def test_snapshot_strip_ansi_applied(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_read
+        mock_manager.get.return_value = mock_session
+        ansi_output = "\x1b[32mgreen text\x1b[0m"
+        mock_session.read_snapshot.return_value = (ansi_output, len(ansi_output), False)
+
+        result = await handle_session_read(
+            mock_manager,
+            {"session_id": "abcd1234", "mode": "snapshot", "strip_ansi": True},
+        )
+        assert result["success"] is True
+        assert "\x1b[" not in result["output"]
+        assert "green text" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_snapshot_strip_ansi_false_preserves_sequences(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_read
+        mock_manager.get.return_value = mock_session
+        ansi_output = "\x1b[32mgreen text\x1b[0m"
+        mock_session.read_snapshot.return_value = (ansi_output, len(ansi_output), False)
+
+        result = await handle_session_read(
+            mock_manager,
+            {"session_id": "abcd1234", "mode": "snapshot", "strip_ansi": False},
+        )
+        assert result["success"] is True
+        assert "\x1b[" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_scrollback_strip_ansi_applied(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_read
+        mock_manager.get.return_value = mock_session
+        ansi_output = "\x1b[31mred line\x1b[0m\nnormal line"
+        mock_session.read_scrollback.return_value = (ansi_output, 2)
+
+        result = await handle_session_read(
+            mock_manager,
+            {"session_id": "abcd1234", "mode": "snapshot", "scrollback": 5, "strip_ansi": True},
+        )
+        assert result["success"] is True
+        assert "\x1b[" not in result["output"]
+        assert "red line" in result["output"]
+
 
 # ---------------------------------------------------------------------------
 # session_close
@@ -624,3 +668,21 @@ class TestHandleSessionExec:
         assert result["success"] is False
         # Session should still be cleaned up
         mock_manager.close.assert_called_once_with("abcd1234")
+
+    @pytest.mark.asyncio
+    async def test_exec_truncates_large_output(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_exec
+        mock_manager.create.return_value = mock_session
+        large_output = "y" * 200_000
+        mock_session.read_stream.side_effect = [
+            ("$ ", 2, True),
+            (large_output, 200_000, False),
+        ]
+        mock_session.send.return_value = 10
+
+        result = await handle_session_exec(
+            mock_manager, {"exec": "find /"}
+        )
+        assert result["success"] is True
+        assert result["truncated"] is True
+        assert "[output truncated]" in result["output"]
