@@ -296,6 +296,13 @@ class PTYSession:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _is_alive(self) -> bool:
+        """Check if process is alive, returning False if already reaped."""
+        try:
+            return self.process.isalive()
+        except Exception:
+            return False
+
     def close(self) -> Optional[int]:
         """
         Gracefully shut down the session.
@@ -310,21 +317,21 @@ class PTYSession:
 
         # Wait up to 2s for clean exit
         for _ in range(20):
-            if not self.process.isalive():
+            if not self._is_alive():
                 break
             time.sleep(0.1)
 
-        if self.process.isalive():
+        if self._is_alive():
             try:
                 self.process.kill(signal.SIGHUP)
             except Exception:
                 pass
             for _ in range(20):
-                if not self.process.isalive():
+                if not self._is_alive():
                     break
                 time.sleep(0.1)
 
-        if self.process.isalive():
+        if self._is_alive():
             try:
                 self.process.kill(signal.SIGKILL)
             except Exception:
