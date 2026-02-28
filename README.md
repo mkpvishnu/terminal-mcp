@@ -1,13 +1,31 @@
 <!-- mcp-name: io.github.mkpvishnu/terminal-mcp -->
-# terminal-mcp
 
-**MCP server for interactive terminal sessions — SSH, REPLs, database CLIs, and TUI apps inside Claude Code.**
+<p align="center">
+  <img src="assets/banner.svg" width="800" alt="terminal-mcp banner"/>
+</p>
 
-[![CI](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/codeql.yml)
-[![PyPI](https://img.shields.io/pypi/v/terminal-mcp.svg)](https://pypi.org/project/terminal-mcp/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+<p align="center">
+  <strong>MCP server for interactive terminal sessions — SSH, REPLs, database CLIs, and TUI apps.</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/terminal-mcp/"><img src="https://img.shields.io/pypi/v/terminal-mcp.svg" alt="PyPI"/></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"/></a>
+  <a href="https://github.com/mkpvishnu/terminal-mcp/actions/workflows/ci.yml"><img src="https://github.com/mkpvishnu/terminal-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="https://github.com/mkpvishnu/terminal-mcp/actions/workflows/codeql.yml"><img src="https://github.com/mkpvishnu/terminal-mcp/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"/></a>
+</p>
+
+<p align="center">
+  <a href="https://insiders.vscode.dev/redirect/mcp/install?name=terminal-mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22terminal-mcp%22%5D%7D"><img src="https://img.shields.io/badge/VS_Code-Install-007ACC?logo=visual-studio-code&logoColor=white" alt="Install in VS Code"/></a>
+  <a href="https://insiders.vscode.dev/redirect/mcp/install?name=terminal-mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22terminal-mcp%22%5D%7D"><img src="https://img.shields.io/badge/VS_Code_Insiders-Install-24bfa5?logo=visual-studio-code&logoColor=white" alt="Install in VS Code Insiders"/></a>
+  <a href="cursor://anysphere.cursor-mcp/install?name=terminal-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJ0ZXJtaW5hbC1tY3AiXX0="><img src="https://img.shields.io/badge/Cursor-Install-F37626?logo=cursor&logoColor=white" alt="Install in Cursor"/></a>
+  <a href="#register-with-claude-desktop"><img src="https://img.shields.io/badge/Claude_Desktop-Install-cc785c?logo=claude&logoColor=white" alt="Install in Claude Desktop"/></a>
+</p>
+
+<p align="center">
+  <img src="assets/demo.gif" alt="terminal-mcp demo" width="700"/>
+</p>
 
 ---
 
@@ -41,17 +59,33 @@ terminal-mcp fills this gap by exposing MCP tools that create and manage real PT
 - **Env var configuration** — configure all settings via `TERMINAL_MCP_*` environment variables
 - **PyPI distribution** — install directly with `pip install terminal-mcp`
 
+## Supported Clients
+
+| Client | Status | Install |
+|--------|--------|---------|
+| **Claude Code** (CLI) | ✅ Supported | `~/.claude.json` or `.mcp.json` |
+| **Claude Desktop** | ✅ Supported | [One-click install](#register-with-claude-desktop) |
+| **VS Code** (Copilot Chat) | ✅ Supported | [One-click install](https://insiders.vscode.dev/redirect/mcp/install?name=terminal-mcp&config=%7B%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22terminal-mcp%22%5D%7D) or `.vscode/mcp.json` |
+| **Cursor** | ✅ Supported | [One-click install](cursor://anysphere.cursor-mcp/install?name=terminal-mcp&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyJ0ZXJtaW5hbC1tY3AiXX0=) or Settings → MCP |
+| **Windsurf** | ✅ Supported | `~/.codeium/windsurf/mcp_config.json` |
+
 ## Quickstart
 
-### 1. Install
+### Install
 
-**From PyPI:**
+**Recommended** — no install needed:
+
+```bash
+uvx terminal-mcp
+```
+
+**Or install via pip:**
 
 ```bash
 pip install terminal-mcp
 ```
 
-**From source:**
+**Or from source:**
 
 ```bash
 git clone https://github.com/mkpvishnu/terminal-mcp.git
@@ -59,49 +93,123 @@ cd terminal-mcp
 pip install -e ".[dev]"
 ```
 
-### 2. Register with Claude Code
+### Register with Claude Code
 
-Add to `~/.claude.json` (or your project's `.mcp.json`):
-
-**If installed via pip:**
+Add to `~/.claude.json` (or project `.mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "terminal": {
-      "command": "terminal-mcp"
+      "command": "uvx",
+      "args": ["terminal-mcp"]
     }
   }
 }
 ```
 
-**If installed from source:**
+### Register with Claude Desktop
+
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "terminal": {
-      "command": "python3",
-      "args": ["-m", "terminal_mcp.server"],
-      "env": {
-        "PYTHONPATH": "/absolute/path/to/terminal-mcp"
-      }
+      "command": "uvx",
+      "args": ["terminal-mcp"]
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/terminal-mcp` with the actual path.
+### Register with VS Code / Cursor
 
-### 3. Use it
+Click the one-click install badge above, or add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "terminal-mcp": {
+      "command": "uvx",
+      "args": ["terminal-mcp"]
+    }
+  }
+}
+```
+
+### Verify it works
+
+```
+session_exec  exec="echo hello from terminal-mcp"
+```
+
+## Demo
+
+<details>
+<summary><strong>SSH session to a remote server</strong></summary>
+
+```
+session_create  command="ssh user@myserver.example.com"  label="prod-ssh"
+session_read    session_id="a1b2c3d4"  timeout=5.0
+session_send    session_id="a1b2c3d4"  password="mypassword"
+session_send    session_id="a1b2c3d4"  input="df -h"
+session_read    session_id="a1b2c3d4"
+session_close   session_id="a1b2c3d4"
+```
+
+</details>
+
+<details>
+<summary><strong>Python REPL</strong></summary>
 
 ```
 session_create  command="python3"  label="repl"
-session_read    session_id="abc123"
-session_send    session_id="abc123"  input="print('hello')"
-session_read    session_id="abc123"
-session_close   session_id="abc123"
+session_read    session_id="e5f6g7h8"
+session_send    session_id="e5f6g7h8"  input="import math"
+session_send    session_id="e5f6g7h8"  input="print(math.sqrt(144))"
+session_read    session_id="e5f6g7h8"
+session_close   session_id="e5f6g7h8"
 ```
+
+</details>
+
+<details>
+<summary><strong>TUI navigation with special keys</strong></summary>
+
+```
+session_create  command="python3 -m openclaw configure"  label="openclaw"
+session_read    session_id="x1y2z3w4"  timeout=3.0
+session_send    session_id="x1y2z3w4"  key="down"
+session_send    session_id="x1y2z3w4"  key="down"
+session_send    session_id="x1y2z3w4"  key="enter"
+session_read    session_id="x1y2z3w4"
+session_send    session_id="x1y2z3w4"  key="tab"
+session_read    session_id="x1y2z3w4"
+session_close   session_id="x1y2z3w4"
+```
+
+</details>
+
+<details>
+<summary><strong>One-shot command execution</strong></summary>
+
+```
+session_exec  exec="ls -la /tmp"
+session_exec  exec="python3 -c 'print(42)'"  command="bash"  timeout=10.0
+```
+
+</details>
+
+<details>
+<summary><strong>Sending Ctrl-C to interrupt</strong></summary>
+
+```
+session_send    session_id="a1b2c3d4"  control_char="c"
+session_read    session_id="a1b2c3d4"
+```
+
+</details>
 
 ## Tool Reference
 
@@ -136,7 +244,8 @@ Send input text, a control character, or a special key to an active session. Onl
 
 **Returns:** `bytes_sent`
 
-#### Supported special keys
+<details>
+<summary>Supported special keys</summary>
 
 | Key | Description | Key | Description |
 |-----|-------------|-----|-------------|
@@ -149,7 +258,10 @@ Send input text, a control character, or a special key to an active session. Onl
 | `escape` | Escape | `delete` | Delete |
 | `enter` | Enter | `backspace` | Backspace |
 
-#### Supported control characters
+</details>
+
+<details>
+<summary>Supported control characters</summary>
 
 | Char | Signal | Description |
 |------|--------|-------------|
@@ -158,6 +270,8 @@ Send input text, a control character, or a special key to an active session. Onl
 | `z` | SIGTSTP | Suspend (Ctrl-Z) |
 | `l` | — | Clear screen (Ctrl-L) |
 | `]` | — | Telnet escape |
+
+</details>
 
 ### session_resize
 
@@ -215,59 +329,33 @@ List all active sessions with their status and idle time.
 
 **Returns:** `sessions` (array), `count`
 
-## Usage Examples
-
-### SSH session
-
-```
-session_create  command="ssh user@myserver.example.com"  label="prod-ssh"
-session_read    session_id="a1b2c3d4"  timeout=5.0
-session_send    session_id="a1b2c3d4"  password="mypassword"
-session_send    session_id="a1b2c3d4"  input="df -h"
-session_read    session_id="a1b2c3d4"
-session_close   session_id="a1b2c3d4"
-```
-
-### Python REPL
-
-```
-session_create  command="python3"  label="repl"
-session_read    session_id="e5f6g7h8"
-session_send    session_id="e5f6g7h8"  input="import math"
-session_send    session_id="e5f6g7h8"  input="print(math.sqrt(144))"
-session_read    session_id="e5f6g7h8"
-session_close   session_id="e5f6g7h8"
-```
-
-### TUI navigation with special keys
-
-```
-session_create  command="python3 -m openclaw configure"  label="openclaw"
-session_read    session_id="x1y2z3w4"  timeout=3.0
-session_send    session_id="x1y2z3w4"  key="down"
-session_send    session_id="x1y2z3w4"  key="down"
-session_send    session_id="x1y2z3w4"  key="enter"
-session_read    session_id="x1y2z3w4"
-session_send    session_id="x1y2z3w4"  key="tab"
-session_read    session_id="x1y2z3w4"
-session_close   session_id="x1y2z3w4"
-```
-
-### Sending Ctrl-C to interrupt
-
-```
-session_send    session_id="a1b2c3d4"  control_char="c"
-session_read    session_id="a1b2c3d4"
-```
-
-### One-shot command execution
-
-```
-session_exec  exec="ls -la /tmp"
-session_exec  exec="python3 -c 'print(42)'"  command="bash"  timeout=10.0
-```
-
 ## Architecture
+
+```mermaid
+flowchart LR
+    Client[AI Client] -->|MCP JSON-RPC| Server[terminal-mcp]
+    Server --> SM[Session Manager]
+    SM --> S1[PTY 1: bash]
+    SM --> S2[PTY 2: python3]
+    SM --> S3[PTY 3: ssh user@host]
+    S1 & S2 & S3 -.->|PTY output| Reader[Reader Thread]
+    Reader -.->|buffer| Server
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Active : session_create
+    state Active {
+        Idle --> Sending : session_send
+        Sending --> Idle
+        Idle --> Reading : session_read
+        Reading --> Idle
+        Idle --> Resizing : session_resize
+        Resizing --> Idle
+    }
+    Active --> [*] : session_close
+    Active --> [*] : idle_timeout
+```
 
 Each session is backed by a real PTY allocated via `pexpect.spawn`. The design has four main parts:
 
@@ -296,6 +384,11 @@ All settings can be overridden via environment variables prefixed with `TERMINAL
 Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `session_create`.
 
 ## Changelog
+
+### v0.3.1
+
+- **MCP registry publication** — added `mcp-name` marker and `server.json` for official MCP registry
+- Version bump for registry metadata
 
 ### v0.3.0
 

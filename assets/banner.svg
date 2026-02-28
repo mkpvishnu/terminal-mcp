@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 280" width="800" height="280">
+  <defs>
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#56d4dd"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e2030"/>
+      <stop offset="100%" stop-color="#1a1b26"/>
+    </linearGradient>
+    <style>
+      @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+      .cursor { animation: blink 1.1s step-end infinite; }
+    </style>
+  </defs>
+
+  <!-- Window frame -->
+  <rect width="800" height="280" rx="12" fill="url(#bgGrad)"/>
+  <rect width="800" height="280" rx="12" fill="none" stroke="#2f3146" stroke-width="1.5"/>
+
+  <!-- Title bar -->
+  <rect width="800" height="36" rx="12" fill="#16161e"/>
+  <rect x="0" y="24" width="800" height="12" fill="#16161e"/>
+
+  <!-- Traffic lights -->
+  <circle cx="24" cy="18" r="6" fill="#ff5f57"/>
+  <circle cx="44" cy="18" r="6" fill="#febc2e"/>
+  <circle cx="64" cy="18" r="6" fill="#28c840"/>
+
+  <!-- Title bar text -->
+  <text x="400" y="22" text-anchor="middle" font-family="monospace" font-size="13" fill="#565a6e">terminal-mcp</text>
+
+  <!-- Main title -->
+  <text x="400" y="105" text-anchor="middle" font-family="monospace" font-weight="bold" font-size="44" fill="url(#titleGrad)">terminal-mcp</text>
+
+  <!-- Tagline -->
+  <text x="400" y="138" text-anchor="middle" font-family="monospace" font-size="15" fill="#787c99">MCP server for interactive terminal sessions</text>
+
+  <!-- Feature pills -->
+  <g font-family="monospace" font-size="12">
+    <!-- SSH -->
+    <rect x="188" y="158" width="52" height="24" rx="12" fill="#2a2d3d" stroke="#3d4059" stroke-width="1"/>
+    <text x="214" y="174" text-anchor="middle" fill="#7dcfff">SSH</text>
+    <!-- REPLs -->
+    <rect x="252" y="158" width="64" height="24" rx="12" fill="#2a2d3d" stroke="#3d4059" stroke-width="1"/>
+    <text x="284" y="174" text-anchor="middle" fill="#9ece6a">REPLs</text>
+    <!-- PTY -->
+    <rect x="328" y="158" width="50" height="24" rx="12" fill="#2a2d3d" stroke="#3d4059" stroke-width="1"/>
+    <text x="353" y="174" text-anchor="middle" fill="#bb9af7">PTY</text>
+    <!-- TUI -->
+    <rect x="390" y="158" width="48" height="24" rx="12" fill="#2a2d3d" stroke="#3d4059" stroke-width="1"/>
+    <text x="414" y="174" text-anchor="middle" fill="#f7768e">TUI</text>
+    <!-- Database CLI -->
+    <rect x="450" y="158" width="106" height="24" rx="12" fill="#2a2d3d" stroke="#3d4059" stroke-width="1"/>
+    <text x="503" y="174" text-anchor="middle" fill="#e0af68">Database CLI</text>
+    <!-- Ctrl Keys -->
+    <rect x="568" y="158" width="50" height="24" rx="12" fill="#2a2d3d" stroke="#3d4059" stroke-width="1"/>
+    <text x="593" y="174" text-anchor="middle" fill="#73daca">Keys</text>
+  </g>
+
+  <!-- Prompt line -->
+  <text x="180" y="226" font-family="monospace" font-size="15" fill="#565a6e">$</text>
+  <text x="198" y="226" font-family="monospace" font-size="15" fill="#c0caf5">uvx terminal-mcp</text>
+
+  <!-- Blinking cursor -->
+  <rect class="cursor" x="346" y="213" width="9" height="17" rx="1" fill="#56d4dd" opacity="0.85"/>
+
+  <!-- Subtle bottom decoration -->
+  <text x="400" y="260" text-anchor="middle" font-family="monospace" font-size="11" fill="#3d4059">v0.3.1  |  Python 3.10+  |  MIT License</text>
+</svg>
