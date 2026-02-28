@@ -4,6 +4,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from terminal_mcp.pty_session import KEY_MAP
+
 if TYPE_CHECKING:
     from terminal_mcp.session_manager import SessionManager
 
@@ -88,8 +90,20 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
     try:
         control_char = arguments.get("control_char")
         input_text = arguments.get("input")
+        key = arguments.get("key")
         press_enter = arguments.get("press_enter", True)
         bytes_sent = 0
+
+        # Mutual exclusivity: only one of input/control_char/key
+        provided = sum(x is not None for x in (input_text, control_char, key))
+        if provided > 1:
+            return {
+                "success": False,
+                "error": {
+                    "type": "validation_error",
+                    "message": "Only one of 'input', 'control_char', or 'key' may be provided",
+                },
+            }
 
         if control_char is not None:
             valid_chars = {'c', 'd', 'z', 'l', ']'}
@@ -104,6 +118,16 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
             bytes_sent = session.send_control(control_char)
         elif input_text is not None:
             bytes_sent = session.send(input_text, press_enter=press_enter)
+        elif key is not None:
+            if key not in KEY_MAP:
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "validation_error",
+                        "message": f"Unknown key: '{key}'. Valid keys: {sorted(KEY_MAP.keys())}",
+                    },
+                }
+            bytes_sent = session.send_key(key)
         else:
             # Nothing to send — send a bare enter if press_enter is True
             if press_enter:

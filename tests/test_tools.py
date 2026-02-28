@@ -171,6 +171,79 @@ class TestHandleSessionSend:
         assert result["success"] is False
         assert result["error"]["type"] == "not_found"
 
+    @pytest.mark.asyncio
+    async def test_send_key_up(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+        mock_session.send_key.return_value = 3
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "key": "up"}
+        )
+        assert result["success"] is True
+        assert result["bytes_sent"] == 3
+        mock_session.send_key.assert_called_once_with("up")
+
+    @pytest.mark.asyncio
+    async def test_send_key_tab(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+        mock_session.send_key.return_value = 1
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "key": "tab"}
+        )
+        assert result["success"] is True
+        mock_session.send_key.assert_called_once_with("tab")
+
+    @pytest.mark.asyncio
+    async def test_send_key_f12(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+        mock_session.send_key.return_value = 4
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "key": "f12"}
+        )
+        assert result["success"] is True
+        mock_session.send_key.assert_called_once_with("f12")
+
+    @pytest.mark.asyncio
+    async def test_send_invalid_key(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "key": "nonexistent"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+        assert "nonexistent" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_send_key_and_input_mutual_exclusivity(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "key": "up", "input": "hello"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+        assert "Only one of" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_send_key_and_control_char_mutual_exclusivity(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "key": "up", "control_char": "c"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+        assert "Only one of" in result["error"]["message"]
+
 
 # ---------------------------------------------------------------------------
 # session_read

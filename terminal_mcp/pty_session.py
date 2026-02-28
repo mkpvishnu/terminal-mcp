@@ -12,6 +12,36 @@ import pyte
 
 from terminal_mcp.output_buffer import strip_ansi, detect_prompt
 
+KEY_MAP: dict[str, str] = {
+    "up": "\x1b[A",
+    "down": "\x1b[B",
+    "right": "\x1b[C",
+    "left": "\x1b[D",
+    "home": "\x1b[H",
+    "end": "\x1b[F",
+    "page-up": "\x1b[5~",
+    "page-down": "\x1b[6~",
+    "insert": "\x1b[2~",
+    "delete": "\x1b[3~",
+    "backspace": "\x7f",
+    "tab": "\t",
+    "shift-tab": "\x1b[Z",
+    "escape": "\x1b",
+    "enter": "\r",
+    "f1": "\x1bOP",
+    "f2": "\x1bOQ",
+    "f3": "\x1bOR",
+    "f4": "\x1bOS",
+    "f5": "\x1b[15~",
+    "f6": "\x1b[17~",
+    "f7": "\x1b[18~",
+    "f8": "\x1b[19~",
+    "f9": "\x1b[20~",
+    "f10": "\x1b[21~",
+    "f11": "\x1b[23~",
+    "f12": "\x1b[24~",
+}
+
 
 class PTYSession:
     """A persistent interactive terminal session backed by a PTY."""
@@ -127,6 +157,20 @@ class PTYSession:
             self.last_activity = time.time()
             return 1
         return 0
+
+    def send_key(self, key: str) -> int:
+        """
+        Send a special key (arrow, function key, etc.).
+
+        See KEY_MAP for supported key names.
+        Returns the number of bytes sent, or 0 if the key is unknown.
+        """
+        seq = KEY_MAP.get(key)
+        if seq is None:
+            return 0
+        self.process.send(seq)
+        self.last_activity = time.time()
+        return len(seq)
 
     # ------------------------------------------------------------------
     # Read operations

@@ -91,8 +91,9 @@ TOOLS = [
     Tool(
         name="session_send",
         description=(
-            "Send input text or a control character to an active session. "
-            "Use control_char for signals (e.g. 'c' for Ctrl-C)."
+            "Send input text, a control character, or a special key to an active session. "
+            "Use control_char for signals (e.g. 'c' for Ctrl-C). "
+            "Use key for special keys (e.g. 'up', 'tab', 'f1')."
         ),
         inputSchema={
             "type": "object",
@@ -114,6 +115,18 @@ TOOLS = [
                     "type": "string",
                     "description": "Control character to send: 'c' (SIGINT), 'd' (EOF), 'z' (SIGTSTP), 'l' (clear), ']' (telnet)",
                     "enum": ["c", "d", "z", "l", "]"],
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Special key to send (arrow keys, function keys, etc.)",
+                    "enum": [
+                        "up", "down", "left", "right",
+                        "home", "end", "page-up", "page-down",
+                        "insert", "delete", "backspace",
+                        "tab", "shift-tab", "escape", "enter",
+                        "f1", "f2", "f3", "f4", "f5", "f6",
+                        "f7", "f8", "f9", "f10", "f11", "f12",
+                    ],
                 },
             },
             "required": ["session_id"],
