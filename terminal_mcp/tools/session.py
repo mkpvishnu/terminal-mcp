@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -112,6 +113,19 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
                 },
             }
 
+        # Dangerous command gate for input text
+        if input_text is not None and not arguments.get("confirmed", False):
+            from terminal_mcp.safety import check_dangerous
+            danger_reason = check_dangerous(input_text)
+            if danger_reason:
+                return {
+                    "success": False,
+                    "requires_confirmation": True,
+                    "command": input_text,
+                    "reason": danger_reason,
+                    "message": "This command matches a dangerous pattern. Resend with confirmed=true to execute.",
+                }
+
         if control_char is not None:
             valid_chars = {'c', 'd', 'z', 'l', ']'}
             if control_char not in valid_chars:
@@ -218,6 +232,14 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
             "is_alive": session.is_alive,
             "truncated": was_truncated,
         }
+        # Add OSC 133 info if supported
+        if getattr(session, '_osc133_supported', False):
+            result["osc133"] = True
+            result["command_state"] = session._command_state
+            if session._last_exit_code is not None:
+                result["exit_code"] = session._last_exit_code
+            result["command_complete"] = session._last_command_finished
+            session._last_command_finished = False
         if total_lines is not None:
             result["total_lines"] = total_lines
         return result
@@ -394,3 +416,240 @@ async def handle_session_exec(manager: "SessionManager", arguments: dict) -> dic
                 await asyncio.to_thread(manager.close, session.session_id)
             except Exception:
                 pass
+
+
+async def handle_session_interact(manager: "SessionManager", arguments: dict) -> dict:
+    """
+    Send input and read output in a single call.
+
+    Required: session_id
+    Optional (send side): input, press_enter, control_char, key, password
+    Optional (read side): wait_for, timeout, strip_ansi
+    """
+    from terminal_mcp.safety import check_dangerous
+
+    session_id = arguments.get("session_id")
+    if not session_id:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'session_id' is required"},
+        }
+
+    try:
+        session = manager.get(session_id)
+    except KeyError as e:
+        return {
+            "success": False,
+            "error": {"type": "not_found", "message": str(e)},
+        }
+
+    if not session.is_alive:
+        return {
+            "success": False,
+            "error": {"type": "session_dead", "message": "Session process has exited"},
+        }
+
+    control_char = arguments.get("control_char")
+    input_text = arguments.get("input")
+    key = arguments.get("key")
+    password = arguments.get("password")
+    press_enter = arguments.get("press_enter", True)
+    wait_for = arguments.get("wait_for")
+    timeout = float(arguments.get("timeout", 5.0))
+    strip_ansi_flag = arguments.get("strip_ansi", True)
+    confirmed = arguments.get("confirmed", False)
+
+    # Mutual exclusivity check
+    provided = sum(x is not None for x in (input_text, control_char, key, password))
+    if provided > 1:
+        return {
+            "success": False,
+            "error": {
+                "type": "validation_error",
+                "message": "Only one of 'input', 'control_char', 'key', or 'password' may be provided",
+            },
+        }
+
+    # Validate wait_for regex BEFORE sending anything, so invalid regex never
+    # leaves the session in a desynchronised state.
+    if wait_for is not None:
+        try:
+            re.compile(wait_for)
+        except re.error as e:
+            return {
+                "success": False,
+                "error": {"type": "validation_error", "message": f"Invalid wait_for regex: {e}"},
+            }
+
+    # Dangerous command gate for input text
+    if input_text is not None and not confirmed:
+        danger_reason = check_dangerous(input_text)
+        if danger_reason:
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "command": input_text,
+                "reason": danger_reason,
+                "message": "This command matches a dangerous pattern. Resend with confirmed=true to execute.",
+            }
+
+    try:
+        bytes_sent = 0
+
+        if control_char is not None:
+            valid_chars = {'c', 'd', 'z', 'l', ']'}
+            if control_char not in valid_chars:
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "validation_error",
+                        "message": f"control_char must be one of {sorted(valid_chars)}",
+                    },
+                }
+            bytes_sent = await asyncio.to_thread(session.send_control, control_char)
+        elif input_text is not None:
+            bytes_sent = await asyncio.to_thread(session.send, input_text, press_enter=press_enter)
+        elif key is not None:
+            if key not in KEY_MAP:
+                return {
+                    "success": False,
+                    "error": {
+                        "type": "validation_error",
+                        "message": f"Unknown key: '{key}'. Valid keys: {sorted(KEY_MAP.keys())}",
+                    },
+                }
+            bytes_sent = await asyncio.to_thread(session.send_key, key)
+        elif password is not None:
+            logger.info("Sending password to session %s (redacted)", session_id)
+            bytes_sent = await asyncio.to_thread(session.send_password, password)
+        else:
+            if press_enter:
+                bytes_sent = await asyncio.to_thread(session.send, "", press_enter=True)
+
+        # Now read
+        if wait_for is not None:
+            output, bytes_read, matched, prompt_detected = await asyncio.to_thread(
+                session.read_until_pattern,
+                pattern=wait_for,
+                timeout=timeout,
+                strip_ansi_output=strip_ansi_flag,
+            )
+        else:
+            output, bytes_read, prompt_detected = await asyncio.to_thread(
+                session.read_stream,
+                timeout=timeout,
+                strip_ansi_output=strip_ansi_flag,
+            )
+            matched = None
+
+        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+
+        result = {
+            "success": True,
+            "output": output,
+            "bytes_read": bytes_read,
+            "bytes_sent": bytes_sent,
+            "prompt_detected": prompt_detected,
+            "is_alive": session.is_alive,
+            "truncated": was_truncated,
+        }
+        if matched is not None:
+            result["matched"] = matched
+
+        # Add OSC 133 info if supported
+        if getattr(session, '_osc133_supported', False):
+            result["osc133"] = True
+            result["command_state"] = session._command_state
+            if session._last_exit_code is not None:
+                result["exit_code"] = session._last_exit_code
+            result["command_complete"] = session._last_command_finished
+            session._last_command_finished = False
+
+        return result
+
+    except Exception as e:
+        logger.exception("Error in session_interact for session %s", session_id)
+        return {
+            "success": False,
+            "error": {"type": "interact_error", "message": str(e)},
+        }
+
+
+async def handle_session_wait_for(manager: "SessionManager", arguments: dict) -> dict:
+    """
+    Read output from a session until a regex pattern matches or timeout expires.
+
+    Required: session_id, pattern
+    Optional: timeout (float, default 30.0), strip_ansi (bool, default True)
+    """
+    session_id = arguments.get("session_id")
+    if not session_id:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'session_id' is required"},
+        }
+
+    pattern = arguments.get("pattern")
+    if not pattern:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'pattern' is required"},
+        }
+
+    # Validate regex
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": f"Invalid regex pattern: {e}"},
+        }
+
+    try:
+        session = manager.get(session_id)
+    except KeyError as e:
+        return {
+            "success": False,
+            "error": {"type": "not_found", "message": str(e)},
+        }
+
+    timeout = float(arguments.get("timeout", 30.0))
+    strip_ansi_output = arguments.get("strip_ansi", True)
+
+    try:
+        output, bytes_read, matched, prompt_detected = await asyncio.to_thread(
+            session.read_until_pattern,
+            pattern=pattern,
+            timeout=timeout,
+            strip_ansi_output=strip_ansi_output,
+        )
+
+        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+
+        result = {
+            "success": True,
+            "output": output,
+            "bytes_read": bytes_read,
+            "matched": matched,
+            "prompt_detected": prompt_detected,
+            "is_alive": session.is_alive,
+            "truncated": was_truncated,
+        }
+
+        # Add OSC 133 info if supported
+        if getattr(session, '_osc133_supported', False):
+            result["osc133"] = True
+            result["command_state"] = session._command_state
+            if session._last_exit_code is not None:
+                result["exit_code"] = session._last_exit_code
+            result["command_complete"] = session._last_command_finished
+            session._last_command_finished = False
+
+        return result
+
+    except Exception as e:
+        logger.exception("Error in session_wait_for for session %s", session_id)
+        return {
+            "success": False,
+            "error": {"type": "read_error", "message": str(e)},
+        }

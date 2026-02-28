@@ -23,6 +23,8 @@ from terminal_mcp.tools.session import (
     handle_session_list,
     handle_session_resize,
     handle_session_exec,
+    handle_session_wait_for,
+    handle_session_interact,
 )
 
 # All logging MUST go to stderr (required for stdio transport)
@@ -140,6 +142,10 @@ TOOLS = [
                 "password": {
                     "type": "string",
                     "description": "Password or secret to send (will not be logged)",
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": "Set to true to bypass dangerous command gate",
                 },
             },
             "required": ["session_id"],
@@ -264,6 +270,42 @@ TOOLS = [
             "required": ["exec"],
         },
     ),
+    Tool(
+        name="session_wait_for",
+        description="Read output from a session until a regex pattern matches or timeout expires. "
+                    "Use this instead of session_read when you know what output to expect.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "pattern": {"type": "string", "description": "Regex pattern to wait for in output"},
+                "timeout": {"type": "number", "description": "Max seconds to wait", "default": 30.0},
+                "strip_ansi": {"type": "boolean", "description": "Strip ANSI escape sequences", "default": True},
+            },
+            "required": ["session_id", "pattern"],
+        },
+    ),
+    Tool(
+        name="session_interact",
+        description="Send input and read output in a single call. Combines session_send + session_read "
+                    "to halve round trips. Optionally waits for a regex pattern in the output.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "input": {"type": "string", "description": "Text to send"},
+                "press_enter": {"type": "boolean", "description": "Append carriage return", "default": True},
+                "control_char": {"type": "string", "description": "Control character", "enum": ["c", "d", "z", "l", "]"]},
+                "key": {"type": "string", "description": "Special key", "enum": ["up", "down", "left", "right", "home", "end", "page-up", "page-down", "insert", "delete", "backspace", "tab", "shift-tab", "escape", "enter", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"]},
+                "password": {"type": "string", "description": "Secret input (not logged)"},
+                "wait_for": {"type": "string", "description": "Regex pattern to wait for in output"},
+                "timeout": {"type": "number", "description": "Seconds to wait for output", "default": 5.0},
+                "strip_ansi": {"type": "boolean", "description": "Strip ANSI sequences", "default": True},
+                "confirmed": {"type": "boolean", "description": "Set to true to bypass dangerous command gate"},
+            },
+            "required": ["session_id"],
+        },
+    ),
 ]
 
 
@@ -278,7 +320,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Route tool calls to the appropriate handler."""
     # Redact password from logged arguments
     log_args = arguments
-    if name == "session_send" and "password" in arguments:
+    if name in ("session_send", "session_interact") and "password" in arguments:
         log_args = {**arguments, "password": "***REDACTED***"}
     logger.info("Tool called: %s with args: %s", name, log_args)
 
@@ -299,6 +341,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await handle_session_list(manager, arguments)
         elif name == "session_exec":
             result = await handle_session_exec(manager, arguments)
+        elif name == "session_wait_for":
+            result = await handle_session_wait_for(manager, arguments)
+        elif name == "session_interact":
+            result = await handle_session_interact(manager, arguments)
         else:
             result = {
                 "success": False,
