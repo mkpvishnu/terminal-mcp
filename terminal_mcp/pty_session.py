@@ -66,6 +66,11 @@ class PTYSession:
         self.created_at = time.time()
         self.last_activity = time.time()
         self._max_buffer_bytes = max_buffer_bytes
+        # OSC 133 shell integration tracking
+        self._osc133_supported = False
+        self._last_command_finished = False
+        self._last_exit_code: Optional[int] = None
+        self._command_state: str = "idle"  # "idle" | "prompt" | "running" | "output"
 
         # Spawn the PTY process via pexpect
         self.process = pexpect.spawn(
@@ -108,6 +113,8 @@ class PTYSession:
             try:
                 data = self.process.read_nonblocking(size=4096, timeout=0.1)
                 if data:
+                    # Scan for OSC 133 shell integration markers
+                    self._parse_osc133(data)
                     with self._buffer_lock:
                         self._buffer.extend(data)
                         if len(self._buffer) > self._max_buffer_bytes:
@@ -135,6 +142,37 @@ class PTYSession:
                 break
             except Exception:
                 break
+
+    # OSC 133 marker pattern: ESC ] 133 ; {marker} [; {params}] BEL  or  ESC \
+    _OSC133_PATTERN = re.compile(
+        rb'\x1b\]133;([A-D])(?:;([^\x07\x1b]*))?(?:\x07|\x1b\\)'
+    )
+
+    def _parse_osc133(self, data: bytes) -> None:
+        """Parse OSC 133 sequences from raw PTY data and update state."""
+        for match in self._OSC133_PATTERN.finditer(data):
+            self._osc133_supported = True
+            marker = match.group(1).decode('ascii', errors='replace')
+            params = match.group(2)
+
+            if marker == 'A':
+                # Prompt start
+                self._command_state = "prompt"
+            elif marker == 'B':
+                # Command start (user pressed Enter, command about to run)
+                self._command_state = "running"
+            elif marker == 'C':
+                # Output start
+                self._command_state = "output"
+            elif marker == 'D':
+                # Command finished
+                self._last_command_finished = True
+                self._command_state = "idle"
+                if params:
+                    try:
+                        self._last_exit_code = int(params.decode('ascii', errors='replace'))
+                    except (ValueError, AttributeError):
+                        pass
 
     # ------------------------------------------------------------------
     # Send operations
@@ -291,6 +329,66 @@ class PTYSession:
 
         text = "\n".join(all_lines)
         return text, len(all_lines)
+
+    def read_until_pattern(
+        self,
+        pattern: str,
+        timeout: float = 30.0,
+        strip_ansi_output: bool = True,
+    ) -> tuple[str, int, bool, bool]:
+        """
+        Read output until pattern matches or timeout expires.
+
+        Returns: (output_text, bytes_read, matched, prompt_detected)
+        """
+        compiled = re.compile(pattern)
+        deadline = time.time() + timeout
+
+        # Snapshot the start position
+        with self._buffer_lock:
+            start_pos = self._read_position
+
+        accumulated_text = ""
+
+        while time.time() < deadline:
+            with self._buffer_lock:
+                # Re-clamp start_pos in case the reader thread trimmed the
+                # buffer since the last iteration (stale pointer guard).
+                start_pos = min(start_pos, len(self._buffer))
+                new_data = bytes(self._buffer[start_pos:])
+
+            if new_data:
+                decoded = new_data.decode('utf-8', errors='replace')
+                if strip_ansi_output:
+                    decoded = strip_ansi(decoded)
+                accumulated_text = decoded
+
+                if compiled.search(accumulated_text):
+                    # Update read position
+                    with self._buffer_lock:
+                        actual_new_data = bytes(self._buffer[start_pos:])
+                        self._read_position = len(self._buffer)
+                    prompt_detected = detect_prompt(accumulated_text)
+                    return accumulated_text, len(actual_new_data), True, prompt_detected
+
+            # Check if process died
+            if not self._is_alive():
+                break
+
+            time.sleep(0.05)
+
+        # Timeout expired or process died
+        with self._buffer_lock:
+            actual_new_data = bytes(self._buffer[start_pos:])
+            self._read_position = len(self._buffer)
+
+        if not accumulated_text and actual_new_data:
+            accumulated_text = actual_new_data.decode('utf-8', errors='replace')
+            if strip_ansi_output:
+                accumulated_text = strip_ansi(accumulated_text)
+
+        prompt_detected = detect_prompt(accumulated_text)
+        return accumulated_text, len(actual_new_data), False, prompt_detected
 
     # ------------------------------------------------------------------
     # Lifecycle
