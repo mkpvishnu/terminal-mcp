@@ -4,8 +4,24 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "terminal-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server for interactive terminal sessions (SSH, REPLs, database CLIs)"
+authors = [{name = "mkpvishnu"}]
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["mcp", "terminal", "pty", "ssh", "repl", "interactive", "claude-code", "pexpect"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Terminals",
+]
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.2.0,<2.0.0",
@@ -29,3 +45,8 @@ include = ["terminal_mcp*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[project.urls]
+Homepage = "https://github.com/mkpvishnu/terminal-mcp"
+Repository = "https://github.com/mkpvishnu/terminal-mcp"
+Issues = "https://github.com/mkpvishnu/terminal-mcp/issues"
