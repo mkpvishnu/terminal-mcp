@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/codeql.yml/badge.svg)](https://github.com/mkpvishnu/terminal-mcp/actions/workflows/codeql.yml)
+[![PyPI](https://img.shields.io/pypi/v/terminal-mcp.svg)](https://pypi.org/project/terminal-mcp/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -31,10 +32,25 @@ terminal-mcp fills this gap by exposing MCP tools that create and manage real PT
 - **ANSI stripping** — optional removal of escape sequences for clean text output
 - **Idle cleanup** — automatic session cleanup after configurable timeout
 - **Session management** — list, label, and manage multiple concurrent sessions
+- **Dynamic resize** — resize terminal dimensions on the fly with SIGWINCH support
+- **Secret input** — send passwords without logging them
+- **Scrollback history** — access terminal scrollback buffer beyond the visible screen
+- **One-shot execution** — run a single command without manual session management
+- **Output truncation** — automatic truncation of large outputs to prevent context overflow
+- **Env var configuration** — configure all settings via `TERMINAL_MCP_*` environment variables
+- **PyPI distribution** — install directly with `pip install terminal-mcp`
 
 ## Quickstart
 
 ### 1. Install
+
+**From PyPI:**
+
+```bash
+pip install terminal-mcp
+```
+
+**From source:**
 
 ```bash
 git clone https://github.com/mkpvishnu/terminal-mcp.git
@@ -86,12 +102,13 @@ Spawn a persistent PTY terminal session.
 | `cols` | integer | No | 80 | Terminal width |
 | `idle_timeout` | integer | No | 1800 | Seconds before auto-close |
 | `enable_snapshot` | boolean | No | false | Enable pyte screen buffer for snapshot reads |
+| `scrollback_lines` | integer | No | 1000 | Scrollback history lines (requires enable_snapshot) |
 
 **Returns:** `session_id`, `label`, `pid`, `created_at`
 
 ### session_send
 
-Send input text, a control character, or a special key to an active session. Only one of `input`, `control_char`, or `key` may be provided per call.
+Send input text, a control character, or a special key to an active session. Only one of `input`, `control_char`, `key`, or `password` may be provided per call.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -100,6 +117,7 @@ Send input text, a control character, or a special key to an active session. Onl
 | `press_enter` | boolean | No | true | Append carriage return after input |
 | `control_char` | string | No | — | Control character: `c` `d` `z` `l` `]` |
 | `key` | string | No | — | Special key (see table below) |
+| `password` | string | No | — | Password or secret (not logged) |
 
 **Returns:** `bytes_sent`
 
@@ -126,6 +144,18 @@ Send input text, a control character, or a special key to an active session. Onl
 | `l` | — | Clear screen (Ctrl-L) |
 | `]` | — | Telnet escape |
 
+### session_resize
+
+Resize the terminal window of an active session.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | Yes | — | Session ID |
+| `rows` | integer | Yes | — | New terminal height |
+| `cols` | integer | Yes | — | New terminal width |
+
+**Returns:** `rows`, `cols`
+
 ### session_read
 
 Read output from a session.
@@ -136,8 +166,9 @@ Read output from a session.
 | `mode` | string | No | `stream` | `stream` or `snapshot` |
 | `timeout` | number | No | 2.0 | Settle timeout in seconds (stream mode) |
 | `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
+| `scrollback` | integer | No | — | Lines of scrollback history (snapshot mode) |
 
-**Returns:** `output`, `bytes_read`, `prompt_detected`, `is_alive`
+**Returns:** `output`, `bytes_read`, `prompt_detected`, `is_alive`, `truncated`, `total_lines` (when scrollback used)
 
 ### session_close
 
@@ -148,6 +179,20 @@ Terminate a session gracefully (EOF → SIGHUP → SIGKILL).
 | `session_id` | string | Yes | Session ID to close |
 
 **Returns:** `exit_status`
+
+### session_exec
+
+Execute a command in a temporary session and return output. The session is automatically cleaned up.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `exec` | string | Yes | — | Command to execute |
+| `command` | string | No | `bash` | Shell to use |
+| `timeout` | number | No | 5.0 | Seconds to wait for output |
+| `rows` | integer | No | 24 | Terminal height |
+| `cols` | integer | No | 80 | Terminal width |
+
+**Returns:** `output`, `bytes_read`, `session_id`
 
 ### session_list
 
@@ -162,7 +207,7 @@ List all active sessions with their status and idle time.
 ```
 session_create  command="ssh user@myserver.example.com"  label="prod-ssh"
 session_read    session_id="a1b2c3d4"  timeout=5.0
-session_send    session_id="a1b2c3d4"  input="mypassword"
+session_send    session_id="a1b2c3d4"  password="mypassword"
 session_send    session_id="a1b2c3d4"  input="df -h"
 session_read    session_id="a1b2c3d4"
 session_close   session_id="a1b2c3d4"
@@ -200,6 +245,13 @@ session_send    session_id="a1b2c3d4"  control_char="c"
 session_read    session_id="a1b2c3d4"
 ```
 
+### One-shot command execution
+
+```
+session_exec  exec="ls -la /tmp"
+session_exec  exec="python3 -c 'print(42)'"  command="bash"  timeout=10.0
+```
+
 ## Architecture
 
 Each session is backed by a real PTY allocated via `pexpect.spawn`. The design has four main parts:
@@ -214,19 +266,31 @@ Each session is backed by a real PTY allocated via `pexpect.spawn`. The design h
 
 ## Configuration
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `max_sessions` | `10` | Maximum concurrent sessions |
-| `idle_timeout` | `1800` | Seconds before auto-close |
-| `default_rows` | `24` | Default terminal height |
-| `default_cols` | `80` | Default terminal width |
-| `read_settle_timeout` | `2.0` | Output settle timeout (stream mode) |
-| `max_output_bytes` | `100000` | Max bytes per read |
-| `cleanup_interval` | `60` | Seconds between cleanup sweeps |
+All settings can be overridden via environment variables prefixed with `TERMINAL_MCP_`:
+
+| Setting | Env Var | Default | Description |
+|---------|---------|---------|-------------|
+| `max_sessions` | `TERMINAL_MCP_MAX_SESSIONS` | `10` | Maximum concurrent sessions |
+| `idle_timeout` | `TERMINAL_MCP_IDLE_TIMEOUT` | `1800` | Seconds before auto-close |
+| `default_rows` | `TERMINAL_MCP_DEFAULT_ROWS` | `24` | Default terminal height |
+| `default_cols` | `TERMINAL_MCP_DEFAULT_COLS` | `80` | Default terminal width |
+| `read_settle_timeout` | `TERMINAL_MCP_READ_SETTLE_TIMEOUT` | `2.0` | Output settle timeout |
+| `max_output_bytes` | `TERMINAL_MCP_MAX_OUTPUT_BYTES` | `100000` | Max bytes per read |
+| `cleanup_interval` | `TERMINAL_MCP_CLEANUP_INTERVAL` | `60` | Seconds between cleanup |
 
 Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `session_create`.
 
 ## Changelog
+
+### v0.3.0
+
+- **Output truncation** — large outputs are now automatically truncated to `max_output_bytes` (100KB default)
+- **Environment variable config** — all settings configurable via `TERMINAL_MCP_*` env vars
+- **session_resize tool** — dynamically resize terminal dimensions (sends SIGWINCH)
+- **Secret input** — `password` parameter on `session_send` for credentials (redacted from logs)
+- **Scrollback buffer** — `pyte.HistoryScreen` with configurable history depth; `scrollback` param on `session_read`
+- **session_exec tool** — one-shot command execution with automatic session cleanup
+- **PyPI publishing** — `pip install terminal-mcp` via trusted publishing workflow
 
 ### v0.2.0
 
