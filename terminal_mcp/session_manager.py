@@ -43,6 +43,7 @@ class SessionManager:
         cols: int = 80,
         idle_timeout: Optional[int] = None,
         enable_snapshot: bool = False,
+        scrollback_lines: int = 1000,
     ) -> PTYSession:
         """Spawn a new PTY session and register it."""
         with self._lock:
@@ -56,6 +57,7 @@ class SessionManager:
                 rows=rows,
                 cols=cols,
                 enable_snapshot=enable_snapshot,
+                scrollback_lines=scrollback_lines,
             )
             # Store optional per-session idle timeout
             if idle_timeout is not None:

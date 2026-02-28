@@ -86,6 +86,18 @@ class TestHandleSessionCreate:
         assert call_kwargs["idle_timeout"] == 600
         assert call_kwargs["enable_snapshot"] is True
 
+    @pytest.mark.asyncio
+    async def test_create_with_scrollback_lines(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_create
+        mock_manager.create.return_value = mock_session
+
+        await handle_session_create(
+            mock_manager,
+            {"command": "/bin/bash", "enable_snapshot": True, "scrollback_lines": 500},
+        )
+        call_kwargs = mock_manager.create.call_args[1]
+        assert call_kwargs["scrollback_lines"] == 500
+
 
 # ---------------------------------------------------------------------------
 # session_send
@@ -244,6 +256,53 @@ class TestHandleSessionSend:
         assert result["error"]["type"] == "validation_error"
         assert "Only one of" in result["error"]["message"]
 
+    @pytest.mark.asyncio
+    async def test_send_password(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+        mock_session.send_password.return_value = 9
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "password": "secret"}
+        )
+        assert result["success"] is True
+        assert result["bytes_sent"] == 9
+        mock_session.send_password.assert_called_once_with("secret")
+
+    @pytest.mark.asyncio
+    async def test_password_and_input_mutual_exclusivity(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "password": "secret", "input": "hello"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+        assert "Only one of" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_password_and_key_mutual_exclusivity(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "password": "secret", "key": "enter"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+
+    @pytest.mark.asyncio
+    async def test_password_and_control_char_mutual_exclusivity(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_send
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_send(
+            mock_manager, {"session_id": "abcd1234", "password": "secret", "control_char": "c"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+
 
 # ---------------------------------------------------------------------------
 # session_read
@@ -307,6 +366,48 @@ class TestHandleSessionRead:
             {"session_id": "abcd1234", "timeout": 5.0, "strip_ansi": False},
         )
         mock_session.read_stream.assert_called_once_with(timeout=5.0, strip_ansi_output=False)
+
+    @pytest.mark.asyncio
+    async def test_read_includes_truncated_false(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_read
+        mock_manager.get.return_value = mock_session
+        mock_session.read_stream.return_value = ("short output", 12, False)
+
+        result = await handle_session_read(
+            mock_manager, {"session_id": "abcd1234"}
+        )
+        assert result["success"] is True
+        assert result["truncated"] is False
+
+    @pytest.mark.asyncio
+    async def test_read_truncates_large_output(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_read
+        mock_manager.get.return_value = mock_session
+        # 200KB of output
+        large_output = "x" * 200_000
+        mock_session.read_stream.return_value = (large_output, 200_000, False)
+
+        result = await handle_session_read(
+            mock_manager, {"session_id": "abcd1234"}
+        )
+        assert result["success"] is True
+        assert result["truncated"] is True
+        assert "[output truncated]" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_read_with_scrollback(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_read
+        mock_manager.get.return_value = mock_session
+        mock_session.read_scrollback.return_value = ("history line\ncurrent line", 2)
+
+        result = await handle_session_read(
+            mock_manager,
+            {"session_id": "abcd1234", "mode": "snapshot", "scrollback": 10},
+        )
+        assert result["success"] is True
+        assert result["output"] == "history line\ncurrent line"
+        assert result["total_lines"] == 2
+        mock_session.read_scrollback.assert_called_once_with(lines_back=10)
 
 
 # ---------------------------------------------------------------------------
@@ -375,3 +476,151 @@ class TestHandleSessionList:
         assert result["success"] is True
         assert result["count"] == 1
         assert result["sessions"][0]["session_id"] == "abcd1234"
+
+
+# ---------------------------------------------------------------------------
+# session_resize
+# ---------------------------------------------------------------------------
+
+class TestHandleSessionResize:
+    @pytest.mark.asyncio
+    async def test_resize_success(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_resize
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_resize(
+            mock_manager, {"session_id": "abcd1234", "rows": 40, "cols": 120}
+        )
+        assert result["success"] is True
+        assert result["rows"] == 40
+        assert result["cols"] == 120
+        mock_session.resize.assert_called_once_with(40, 120)
+
+    @pytest.mark.asyncio
+    async def test_resize_dead_session(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_resize
+        mock_session.is_alive = False
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_resize(
+            mock_manager, {"session_id": "abcd1234", "rows": 40, "cols": 120}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "session_dead"
+
+    @pytest.mark.asyncio
+    async def test_resize_missing_session_id(self, mock_manager):
+        from terminal_mcp.tools.session import handle_session_resize
+        result = await handle_session_resize(
+            mock_manager, {"rows": 40, "cols": 120}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+
+    @pytest.mark.asyncio
+    async def test_resize_missing_dimensions(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_resize
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_resize(
+            mock_manager, {"session_id": "abcd1234", "rows": 40}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+
+    @pytest.mark.asyncio
+    async def test_resize_not_found(self, mock_manager):
+        from terminal_mcp.tools.session import handle_session_resize
+        mock_manager.get.side_effect = KeyError("Session not found: bad-id")
+
+        result = await handle_session_resize(
+            mock_manager, {"session_id": "bad-id", "rows": 40, "cols": 120}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "not_found"
+
+    @pytest.mark.asyncio
+    async def test_resize_invalid_rows(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_resize
+        mock_manager.get.return_value = mock_session
+
+        result = await handle_session_resize(
+            mock_manager, {"session_id": "abcd1234", "rows": -1, "cols": 80}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+
+
+# ---------------------------------------------------------------------------
+# session_exec
+# ---------------------------------------------------------------------------
+
+class TestHandleSessionExec:
+    @pytest.mark.asyncio
+    async def test_exec_success(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_exec
+        mock_manager.create.return_value = mock_session
+        mock_session.read_stream.side_effect = [
+            ("$ ", 2, True),  # startup
+            ("hello world\n$ ", 15, True),  # command output
+        ]
+        mock_session.send.return_value = 11
+
+        result = await handle_session_exec(
+            mock_manager, {"exec": "echo hello world"}
+        )
+        assert result["success"] is True
+        assert result["output"] == "hello world\n$ "
+        mock_manager.close.assert_called_once_with("abcd1234")
+
+    @pytest.mark.asyncio
+    async def test_exec_missing_exec(self, mock_manager):
+        from terminal_mcp.tools.session import handle_session_exec
+        result = await handle_session_exec(mock_manager, {})
+        assert result["success"] is False
+        assert result["error"]["type"] == "validation_error"
+
+    @pytest.mark.asyncio
+    async def test_exec_with_custom_shell(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_exec
+        mock_manager.create.return_value = mock_session
+        mock_session.read_stream.side_effect = [
+            ("% ", 2, True),
+            ("output\n% ", 10, True),
+        ]
+        mock_session.send.return_value = 5
+
+        result = await handle_session_exec(
+            mock_manager, {"exec": "ls -la", "command": "zsh", "timeout": 10.0}
+        )
+        assert result["success"] is True
+        call_kwargs = mock_manager.create.call_args[1]
+        assert call_kwargs["command"] == "zsh"
+
+    @pytest.mark.asyncio
+    async def test_exec_session_limit_error(self, mock_manager):
+        from terminal_mcp.tools.session import handle_session_exec
+        mock_manager.create.side_effect = RuntimeError("Maximum number of sessions (3) reached")
+
+        result = await handle_session_exec(
+            mock_manager, {"exec": "echo hi"}
+        )
+        assert result["success"] is False
+        assert result["error"]["type"] == "session_limit_reached"
+
+    @pytest.mark.asyncio
+    async def test_exec_always_cleans_up(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_exec
+        mock_manager.create.return_value = mock_session
+        mock_session.read_stream.side_effect = [
+            ("$ ", 2, True),  # startup
+            Exception("read failed"),  # command output fails
+        ]
+        mock_session.send.return_value = 5
+
+        result = await handle_session_exec(
+            mock_manager, {"exec": "bad-command"}
+        )
+        assert result["success"] is False
+        # Session should still be cleaned up
+        mock_manager.close.assert_called_once_with("abcd1234")

@@ -3,6 +3,7 @@
 import sys
 import time
 import pytest
+import pyte
 
 from terminal_mcp.pty_session import PTYSession
 
@@ -108,3 +109,62 @@ class TestPTYSessionClose:
         # Process should have exited; close should be graceful
         exit_status = session.close()
         assert exit_status is None or isinstance(exit_status, int)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="PTY not supported on Windows")
+class TestPTYSessionResize:
+    def test_resize_updates_dimensions(self):
+        session = PTYSession(command="/bin/cat", rows=24, cols=80)
+        time.sleep(0.3)
+        session.resize(40, 120)
+        assert session.rows == 40
+        assert session.cols == 120
+        session.close()
+
+    def test_resize_with_pyte_screen(self):
+        session = PTYSession(command="/bin/cat", rows=24, cols=80, enable_snapshot=True)
+        time.sleep(0.3)
+        session.resize(50, 132)
+        assert session.rows == 50
+        assert session.cols == 132
+        assert session._screen.lines == 50
+        assert session._screen.columns == 132
+        session.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="PTY not supported on Windows")
+class TestPTYSessionScrollback:
+    def test_history_screen_used_when_scrollback_positive(self):
+        session = PTYSession(
+            command="/bin/echo hello", enable_snapshot=True, scrollback_lines=500
+        )
+        time.sleep(0.3)
+        assert isinstance(session._screen, pyte.HistoryScreen)
+        session.close()
+
+    def test_plain_screen_when_scrollback_zero(self):
+        session = PTYSession(
+            command="/bin/echo hello", enable_snapshot=True, scrollback_lines=0
+        )
+        time.sleep(0.3)
+        assert type(session._screen) is pyte.Screen
+        session.close()
+
+    def test_scrollback_empty_without_snapshot(self):
+        session = PTYSession(command="/bin/echo hello", enable_snapshot=False)
+        time.sleep(0.3)
+        text, total = session.read_scrollback(lines_back=10)
+        assert text == ""
+        assert total == 0
+        session.close()
+
+    def test_scrollback_returns_screen_with_zero_lines_back(self):
+        session = PTYSession(
+            command="/bin/echo test_scrollback_output",
+            enable_snapshot=True,
+            scrollback_lines=100,
+        )
+        time.sleep(0.5)
+        text, total = session.read_scrollback(lines_back=0)
+        assert isinstance(text, str)
+        session.close()

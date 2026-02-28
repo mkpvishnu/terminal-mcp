@@ -19,6 +19,8 @@ from terminal_mcp.tools.session import (
     handle_session_read,
     handle_session_close,
     handle_session_list,
+    handle_session_resize,
+    handle_session_exec,
 )
 
 # All logging MUST go to stderr (required for stdio transport)
@@ -84,6 +86,11 @@ TOOLS = [
                     "description": "Enable pyte screen buffer for snapshot reads",
                     "default": False,
                 },
+                "scrollback_lines": {
+                    "type": "integer",
+                    "description": "Number of scrollback history lines to keep (requires enable_snapshot)",
+                    "default": 1000,
+                },
             },
             "required": ["command"],
         },
@@ -128,8 +135,34 @@ TOOLS = [
                         "f7", "f8", "f9", "f10", "f11", "f12",
                     ],
                 },
+                "password": {
+                    "type": "string",
+                    "description": "Password or secret to send (will not be logged)",
+                },
             },
             "required": ["session_id"],
+        },
+    ),
+    Tool(
+        name="session_resize",
+        description="Resize the terminal window of an active session. Sends SIGWINCH to the process.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID returned by session_create",
+                },
+                "rows": {
+                    "type": "integer",
+                    "description": "New terminal height in rows",
+                },
+                "cols": {
+                    "type": "integer",
+                    "description": "New terminal width in columns",
+                },
+            },
+            "required": ["session_id", "rows", "cols"],
         },
     ),
     Tool(
@@ -161,6 +194,10 @@ TOOLS = [
                     "description": "Strip ANSI escape sequences from output",
                     "default": True,
                 },
+                "scrollback": {
+                    "type": "integer",
+                    "description": "Lines of scrollback history to include (snapshot mode only)",
+                },
             },
             "required": ["session_id"],
         },
@@ -188,6 +225,43 @@ TOOLS = [
             "required": [],
         },
     ),
+    Tool(
+        name="session_exec",
+        description=(
+            "Execute a command in a temporary session and return the output. "
+            "The session is automatically cleaned up after execution."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "exec": {
+                    "type": "string",
+                    "description": "Command to execute in the session",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell to use (default: bash)",
+                    "default": "bash",
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Seconds to wait for command output",
+                    "default": 5.0,
+                },
+                "rows": {
+                    "type": "integer",
+                    "description": "Terminal height in rows",
+                    "default": 24,
+                },
+                "cols": {
+                    "type": "integer",
+                    "description": "Terminal width in columns",
+                    "default": 80,
+                },
+            },
+            "required": ["exec"],
+        },
+    ),
 ]
 
 
@@ -200,7 +274,11 @@ async def list_tools() -> list[Tool]:
 @app.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Route tool calls to the appropriate handler."""
-    logger.info("Tool called: %s with args: %s", name, arguments)
+    # Redact password from logged arguments
+    log_args = arguments
+    if name == "session_send" and "password" in arguments:
+        log_args = {**arguments, "password": "***REDACTED***"}
+    logger.info("Tool called: %s with args: %s", name, log_args)
 
     try:
         manager = get_manager()
@@ -209,12 +287,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             result = await handle_session_create(manager, arguments)
         elif name == "session_send":
             result = await handle_session_send(manager, arguments)
+        elif name == "session_resize":
+            result = await handle_session_resize(manager, arguments)
         elif name == "session_read":
             result = await handle_session_read(manager, arguments)
         elif name == "session_close":
             result = await handle_session_close(manager, arguments)
         elif name == "session_list":
             result = await handle_session_list(manager, arguments)
+        elif name == "session_exec":
+            result = await handle_session_exec(manager, arguments)
         else:
             result = {
                 "success": False,

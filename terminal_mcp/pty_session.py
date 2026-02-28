@@ -53,6 +53,7 @@ class PTYSession:
         rows: int = 24,
         cols: int = 80,
         enable_snapshot: bool = False,
+        scrollback_lines: int = 1000,
     ):
         self.session_id = str(uuid.uuid4())[:8]
         self.command = command
@@ -60,6 +61,7 @@ class PTYSession:
         self.rows = rows
         self.cols = cols
         self.enable_snapshot = enable_snapshot
+        self.scrollback_lines = scrollback_lines
         self.created_at = time.time()
         self.last_activity = time.time()
 
@@ -80,7 +82,10 @@ class PTYSession:
         self._screen: Optional[pyte.Screen] = None
         self._pyte_stream: Optional[pyte.Stream] = None
         if enable_snapshot:
-            self._screen = pyte.Screen(cols, rows)
+            if scrollback_lines > 0:
+                self._screen = pyte.HistoryScreen(cols, rows, history=scrollback_lines)
+            else:
+                self._screen = pyte.Screen(cols, rows)
             self._pyte_stream = pyte.Stream(self._screen)
 
         # Start background reader thread (daemon so it dies with the process)
@@ -172,6 +177,21 @@ class PTYSession:
         self.last_activity = time.time()
         return len(seq)
 
+    def send_password(self, password: str) -> int:
+        """Send a password to the PTY without logging it. Returns bytes sent."""
+        self.process.sendline(password)
+        self.last_activity = time.time()
+        return len(password.encode()) + 1  # +1 for \r
+
+    def resize(self, rows: int, cols: int) -> None:
+        """Resize the PTY window. Sends SIGWINCH to the child process."""
+        self.process.setwinsize(rows, cols)
+        self.rows = rows
+        self.cols = cols
+        if self._screen is not None:
+            self._screen.resize(rows, cols)
+        self.last_activity = time.time()
+
     # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
@@ -231,6 +251,37 @@ class PTYSession:
         display = "\n".join(self._screen.display)
         display = display.rstrip()
         return display, len(display.encode('utf-8')), False
+
+    def read_scrollback(self, lines_back: int = 0) -> tuple[str, int]:
+        """
+        Read scrollback history plus current screen content.
+
+        Args:
+            lines_back: Number of history lines to include (0 = current screen only).
+
+        Returns: (display_text, total_lines)
+        """
+        if self._screen is None:
+            return "", 0
+
+        current_lines = [line.rstrip() for line in self._screen.display]
+
+        if lines_back > 0 and hasattr(self._screen, 'history'):
+            history = self._screen.history.top
+            history_lines = []
+            for row in list(history)[-lines_back:]:
+                line = "".join(row[col].data for col in sorted(row.keys()))
+                history_lines.append(line.rstrip())
+            all_lines = history_lines + current_lines
+        else:
+            all_lines = current_lines
+
+        # Strip trailing empty lines
+        while all_lines and not all_lines[-1]:
+            all_lines.pop()
+
+        text = "\n".join(all_lines)
+        return text, len(all_lines)
 
     # ------------------------------------------------------------------
     # Lifecycle

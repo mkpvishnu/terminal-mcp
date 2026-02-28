@@ -5,6 +5,8 @@ import time
 from typing import TYPE_CHECKING
 
 from terminal_mcp.pty_session import KEY_MAP
+from terminal_mcp.output_buffer import truncate_output
+from terminal_mcp.config import get_config
 
 if TYPE_CHECKING:
     from terminal_mcp.session_manager import SessionManager
@@ -17,7 +19,7 @@ async def handle_session_create(manager: "SessionManager", arguments: dict) -> d
     Create a new PTY session.
 
     Required: command (str)
-    Optional: label, rows, cols, idle_timeout, enable_snapshot
+    Optional: label, rows, cols, idle_timeout, enable_snapshot, scrollback_lines
     """
     command = arguments.get("command")
     if not command:
@@ -37,6 +39,7 @@ async def handle_session_create(manager: "SessionManager", arguments: dict) -> d
             cols=arguments.get("cols", 80),
             idle_timeout=arguments.get("idle_timeout"),
             enable_snapshot=arguments.get("enable_snapshot", False),
+            scrollback_lines=arguments.get("scrollback_lines", 1000),
         )
         return {
             "success": True,
@@ -64,7 +67,8 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
 
     Required: session_id
     Optional: input (str), press_enter (bool, default True),
-              control_char (one of 'c', 'd', 'z', 'l', ']')
+              control_char (one of 'c', 'd', 'z', 'l', ']'),
+              key, password
     """
     session_id = arguments.get("session_id")
     if not session_id:
@@ -91,17 +95,18 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
         control_char = arguments.get("control_char")
         input_text = arguments.get("input")
         key = arguments.get("key")
+        password = arguments.get("password")
         press_enter = arguments.get("press_enter", True)
         bytes_sent = 0
 
-        # Mutual exclusivity: only one of input/control_char/key
-        provided = sum(x is not None for x in (input_text, control_char, key))
+        # Mutual exclusivity: only one of input/control_char/key/password
+        provided = sum(x is not None for x in (input_text, control_char, key, password))
         if provided > 1:
             return {
                 "success": False,
                 "error": {
                     "type": "validation_error",
-                    "message": "Only one of 'input', 'control_char', or 'key' may be provided",
+                    "message": "Only one of 'input', 'control_char', 'key', or 'password' may be provided",
                 },
             }
 
@@ -128,6 +133,9 @@ async def handle_session_send(manager: "SessionManager", arguments: dict) -> dic
                     },
                 }
             bytes_sent = session.send_key(key)
+        elif password is not None:
+            logger.info("Sending password to session %s (redacted)", session_id)
+            bytes_sent = session.send_password(password)
         else:
             # Nothing to send — send a bare enter if press_enter is True
             if press_enter:
@@ -149,7 +157,8 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
 
     Required: session_id
     Optional: mode ("stream"|"snapshot", default "stream"),
-              timeout (float, default 2.0), strip_ansi (bool, default True)
+              timeout (float, default 2.0), strip_ansi (bool, default True),
+              scrollback (int, snapshot mode only)
     """
     session_id = arguments.get("session_id")
     if not session_id:
@@ -169,23 +178,38 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
     mode = arguments.get("mode", "stream")
     timeout = float(arguments.get("timeout", 2.0))
     strip_ansi = arguments.get("strip_ansi", True)
+    scrollback = arguments.get("scrollback")
 
     try:
         if mode == "snapshot":
-            output, bytes_read, prompt_detected = session.read_snapshot()
+            if scrollback is not None:
+                output, total_lines = session.read_scrollback(lines_back=scrollback)
+                bytes_read = len(output.encode('utf-8'))
+                prompt_detected = False
+            else:
+                output, bytes_read, prompt_detected = session.read_snapshot()
+                total_lines = None
         else:
             output, bytes_read, prompt_detected = session.read_stream(
                 timeout=timeout,
                 strip_ansi_output=strip_ansi,
             )
+            total_lines = None
 
-        return {
+        # Apply output truncation (Feature 1)
+        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+
+        result = {
             "success": True,
             "output": output,
             "bytes_read": bytes_read,
             "prompt_detected": prompt_detected,
             "is_alive": session.is_alive,
+            "truncated": was_truncated,
         }
+        if total_lines is not None:
+            result["total_lines"] = total_lines
+        return result
 
     except Exception as e:
         logger.exception("Error reading from session %s", session_id)
@@ -244,3 +268,112 @@ async def handle_session_list(manager: "SessionManager", arguments: dict) -> dic
             "success": False,
             "error": {"type": "list_error", "message": str(e)},
         }
+
+
+async def handle_session_resize(manager: "SessionManager", arguments: dict) -> dict:
+    """Resize a session's terminal window."""
+    session_id = arguments.get("session_id")
+    if not session_id:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'session_id' is required"},
+        }
+
+    rows = arguments.get("rows")
+    cols = arguments.get("cols")
+    if rows is None or cols is None:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'rows' and 'cols' are required"},
+        }
+
+    if not isinstance(rows, int) or rows <= 0:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'rows' must be a positive integer"},
+        }
+
+    if not isinstance(cols, int) or cols <= 0:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'cols' must be a positive integer"},
+        }
+
+    try:
+        session = manager.get(session_id)
+    except KeyError as e:
+        return {
+            "success": False,
+            "error": {"type": "not_found", "message": str(e)},
+        }
+
+    if not session.is_alive:
+        return {
+            "success": False,
+            "error": {"type": "session_dead", "message": "Session process has exited"},
+        }
+
+    try:
+        session.resize(rows, cols)
+        return {"success": True, "rows": rows, "cols": cols}
+    except Exception as e:
+        logger.exception("Error resizing session %s", session_id)
+        return {
+            "success": False,
+            "error": {"type": "resize_error", "message": str(e)},
+        }
+
+
+async def handle_session_exec(manager: "SessionManager", arguments: dict) -> dict:
+    """Execute a command in a temporary session and return output."""
+    exec_cmd = arguments.get("exec")
+    if not exec_cmd:
+        return {
+            "success": False,
+            "error": {"type": "validation_error", "message": "'exec' is required"},
+        }
+
+    shell = arguments.get("command", "bash")
+    timeout = float(arguments.get("timeout", 5.0))
+    rows = arguments.get("rows", 24)
+    cols = arguments.get("cols", 80)
+    label = f"exec:{exec_cmd[:30]}"
+    session = None
+
+    try:
+        session = manager.create(
+            command=shell,
+            label=label,
+            rows=rows,
+            cols=cols,
+        )
+        # Consume startup output
+        session.read_stream(timeout=1.0)
+        # Send the command
+        session.send(exec_cmd, press_enter=True)
+        # Read the output
+        output, bytes_read, prompt_detected = session.read_stream(timeout=timeout)
+
+        return {
+            "success": True,
+            "output": output,
+            "bytes_read": bytes_read,
+            "session_id": session.session_id,
+        }
+    except RuntimeError as e:
+        return {
+            "success": False,
+            "error": {"type": "session_limit_reached", "message": str(e)},
+        }
+    except Exception as e:
+        logger.exception("Error in session_exec")
+        return {
+            "success": False,
+            "error": {"type": "exec_error", "message": str(e)},
+        }
+    finally:
+        if session is not None:
+            try:
+                manager.close(session.session_id)
+            except Exception:
+                pass
