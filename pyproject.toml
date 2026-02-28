@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "terminal-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server for interactive terminal sessions (SSH, REPLs, database CLIs)"
 authors = [{name = "mkpvishnu"}]
 license = {text = "MIT"}
@@ -33,6 +33,7 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "build",
 ]
 
 [project.scripts]
