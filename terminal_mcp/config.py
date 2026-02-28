@@ -16,6 +16,7 @@ class TerminalConfig:
     read_settle_timeout: float = 2.0
     max_output_bytes: int = 100_000
     cleanup_interval: int = 60  # seconds between idle cleanup checks
+    max_buffer_bytes: int = 1_000_000  # 1MB per-session buffer cap
 
 
 _ENV_MAP = {
@@ -26,6 +27,7 @@ _ENV_MAP = {
     "TERMINAL_MCP_READ_SETTLE_TIMEOUT": ("read_settle_timeout", float),
     "TERMINAL_MCP_MAX_OUTPUT_BYTES": ("max_output_bytes", int),
     "TERMINAL_MCP_CLEANUP_INTERVAL": ("cleanup_interval", int),
+    "TERMINAL_MCP_MAX_BUFFER_BYTES": ("max_buffer_bytes", int),
 }
 
 # Global config singleton

@@ -54,6 +54,7 @@ class PTYSession:
         cols: int = 80,
         enable_snapshot: bool = False,
         scrollback_lines: int = 1000,
+        max_buffer_bytes: int = 1_000_000,
     ):
         self.session_id = str(uuid.uuid4())[:8]
         self.command = command
@@ -64,6 +65,7 @@ class PTYSession:
         self.scrollback_lines = scrollback_lines
         self.created_at = time.time()
         self.last_activity = time.time()
+        self._max_buffer_bytes = max_buffer_bytes
 
         # Spawn the PTY process via pexpect
         self.process = pexpect.spawn(
@@ -108,6 +110,13 @@ class PTYSession:
                 if data:
                     with self._buffer_lock:
                         self._buffer.extend(data)
+                        if len(self._buffer) > self._max_buffer_bytes:
+                            trim = len(self._buffer) - self._max_buffer_bytes
+                            del self._buffer[:trim]
+                            if self._read_position >= trim:
+                                self._read_position -= trim
+                            else:
+                                self._read_position = 0
                         if self._pyte_stream is not None:
                             try:
                                 self._pyte_stream.feed(

@@ -168,3 +168,54 @@ class TestPTYSessionScrollback:
         text, total = session.read_scrollback(lines_back=0)
         assert isinstance(text, str)
         session.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="PTY not supported on Windows")
+class TestPTYSessionBufferCap:
+    def test_buffer_stays_capped_under_max(self):
+        cap = 512
+        session = PTYSession(command="/bin/cat", max_buffer_bytes=cap)
+        time.sleep(0.1)
+
+        big_data = b"x" * (cap * 3)
+        with session._buffer_lock:
+            session._buffer.extend(big_data)
+            if len(session._buffer) > session._max_buffer_bytes:
+                trim = len(session._buffer) - session._max_buffer_bytes
+                del session._buffer[:trim]
+                if session._read_position >= trim:
+                    session._read_position -= trim
+                else:
+                    session._read_position = 0
+
+        with session._buffer_lock:
+            buf_len = len(session._buffer)
+        assert buf_len <= cap
+        session.close()
+
+    def test_read_position_adjusted_after_trim(self):
+        cap = 512
+        session = PTYSession(command="/bin/cat", max_buffer_bytes=cap)
+        time.sleep(0.1)
+
+        with session._buffer_lock:
+            session._buffer.extend(b"a" * 300)
+            session._read_position = 200
+
+        big_data = b"b" * (cap * 2)
+        with session._buffer_lock:
+            session._buffer.extend(big_data)
+            if len(session._buffer) > session._max_buffer_bytes:
+                trim = len(session._buffer) - session._max_buffer_bytes
+                del session._buffer[:trim]
+                if session._read_position >= trim:
+                    session._read_position -= trim
+                else:
+                    session._read_position = 0
+
+        with session._buffer_lock:
+            pos = session._read_position
+            buf_len = len(session._buffer)
+        assert buf_len <= cap
+        assert 0 <= pos <= buf_len
+        session.close()
