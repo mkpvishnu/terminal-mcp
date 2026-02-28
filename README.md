@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.mkpvishnu/terminal-mcp -->
 # terminal-mcp
 
 **MCP server for interactive terminal sessions — SSH, REPLs, database CLIs, and TUI apps inside Claude Code.**
