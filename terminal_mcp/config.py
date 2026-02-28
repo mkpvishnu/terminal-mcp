@@ -17,6 +17,7 @@ class TerminalConfig:
     max_output_bytes: int = 100_000
     cleanup_interval: int = 60  # seconds between idle cleanup checks
     max_buffer_bytes: int = 1_000_000  # 1MB per-session buffer cap
+    safety_gate: bool = True
 
 
 _ENV_MAP = {
@@ -28,6 +29,7 @@ _ENV_MAP = {
     "TERMINAL_MCP_MAX_OUTPUT_BYTES": ("max_output_bytes", int),
     "TERMINAL_MCP_CLEANUP_INTERVAL": ("cleanup_interval", int),
     "TERMINAL_MCP_MAX_BUFFER_BYTES": ("max_buffer_bytes", int),
+    "TERMINAL_MCP_SAFETY_GATE": ("safety_gate", lambda v: v.lower() not in ("off", "false", "0", "no")),
 }
 
 # Global config singleton
