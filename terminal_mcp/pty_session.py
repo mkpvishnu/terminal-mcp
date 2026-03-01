@@ -85,15 +85,17 @@ class PTYSession:
         self._buffer_lock = threading.Lock()
         self._read_position: int = 0  # tracks where the caller last read to
 
-        # Optional pyte screen for snapshot mode
-        self._screen: Optional[pyte.Screen] = None
-        self._pyte_stream: Optional[pyte.Stream] = None
-        if enable_snapshot:
-            if scrollback_lines > 0:
-                self._screen = pyte.HistoryScreen(cols, rows, history=scrollback_lines)
-            else:
-                self._screen = pyte.Screen(cols, rows)
-            self._pyte_stream = pyte.Stream(self._screen)
+        # pyte virtual terminal (always initialised)
+        if scrollback_lines > 0:
+            self._screen = pyte.HistoryScreen(cols, rows, history=scrollback_lines)
+        else:
+            self._screen = pyte.Screen(cols, rows)
+        self._pyte_stream = pyte.Stream(self._screen)
+
+        # TUI / alt-screen tracking
+        self._tui_active: bool = False
+        self._alt_screen_entered: bool = False
+        self._prev_snapshot: Optional[list[str]] = None
 
         # Start background reader thread (daemon so it dies with the process)
         self._reader_thread = threading.Thread(
@@ -115,6 +117,7 @@ class PTYSession:
                 if data:
                     # Scan for OSC 133 shell integration markers
                     self._parse_osc133(data)
+                    self._detect_alt_screen(data)
                     with self._buffer_lock:
                         self._buffer.extend(data)
                         if len(self._buffer) > self._max_buffer_bytes:
@@ -124,13 +127,12 @@ class PTYSession:
                                 self._read_position -= trim
                             else:
                                 self._read_position = 0
-                        if self._pyte_stream is not None:
-                            try:
-                                self._pyte_stream.feed(
-                                    data.decode('utf-8', errors='replace')
-                                )
-                            except Exception:
-                                pass
+                        try:
+                            self._pyte_stream.feed(
+                                data.decode('utf-8', errors='replace')
+                            )
+                        except Exception:
+                            pass
                     self.last_activity = time.time()
             except pexpect.TIMEOUT:
                 # No data available yet – just loop
@@ -142,6 +144,11 @@ class PTYSession:
                 break
             except Exception:
                 break
+
+    # Alt-screen buffer detection: ESC[?{1049,47,1047}{h=enter,l=exit}
+    _ALT_SCREEN_PATTERN = re.compile(
+        rb'\x1b\[\?(1049|47|1047)([hl])'
+    )
 
     # OSC 133 marker pattern: ESC ] 133 ; {marker} [; {params}] BEL  or  ESC \
     _OSC133_PATTERN = re.compile(
@@ -173,6 +180,16 @@ class PTYSession:
                         self._last_exit_code = int(params.decode('ascii', errors='replace'))
                     except (ValueError, AttributeError):
                         pass
+
+    def _detect_alt_screen(self, data: bytes) -> None:
+        """Detect alternate screen buffer entry/exit sequences and update TUI state."""
+        for match in self._ALT_SCREEN_PATTERN.finditer(data):
+            suffix = match.group(2)
+            if suffix == b'h':
+                self._tui_active = True
+                self._alt_screen_entered = True
+            elif suffix == b'l':
+                self._tui_active = False
 
     # ------------------------------------------------------------------
     # Send operations
@@ -235,8 +252,7 @@ class PTYSession:
         self.process.setwinsize(rows, cols)
         self.rows = rows
         self.cols = cols
-        if self._screen is not None:
-            self._screen.resize(rows, cols)
+        self._screen.resize(rows, cols)
         self.last_activity = time.time()
 
     # ------------------------------------------------------------------
@@ -293,11 +309,83 @@ class PTYSession:
         Returns: (display_text, bytes_read, prompt_detected)
         Only works when enable_snapshot=True.
         """
-        if self._screen is None:
-            return "", 0, False
-        display = "\n".join(self._screen.display)
+        with self._buffer_lock:
+            display = "\n".join(self._screen.display)
         display = display.rstrip()
         return display, len(display.encode('utf-8')), False
+
+    def read_auto(
+        self,
+        timeout: float = 2.0,
+        strip_ansi_output: bool = True,
+    ) -> tuple[str, int, bool, str]:
+        """
+        Auto-select read mode based on alternate screen buffer state.
+
+        If a TUI is active (alt-screen entered), returns a pyte snapshot.
+        Otherwise, returns the stream output (new bytes since last read).
+
+        Returns: (output, bytes_read, prompt_detected, mode)
+            mode is either "snapshot" or "stream".
+        """
+        if self._tui_active:
+            output, bytes_read, prompt_detected = self.read_snapshot()
+            return output, bytes_read, prompt_detected, "snapshot"
+        else:
+            output, bytes_read, prompt_detected = self.read_stream(
+                timeout, strip_ansi_output
+            )
+            return output, bytes_read, prompt_detected, "stream"
+
+    def read_diff(self) -> tuple[str, int, list[dict], bool]:
+        """
+        Return only changed lines since the last snapshot read.
+
+        Returns: (formatted_diff_text, bytes_read, changed_lines, is_first_read)
+          - formatted_diff_text: newline-joined content of changed lines (or full screen on first read)
+          - bytes_read: UTF-8 byte count of the formatted text
+          - changed_lines: list of {"line": N, "content": "..."} dicts (1-indexed line numbers)
+          - is_first_read: True if _prev_snapshot was None (first call)
+
+        Note: bytes_read in diff mode represents the byte size of the formatted
+        diff text, not the number of raw PTY bytes received (unlike stream mode).
+        """
+        with self._buffer_lock:
+            current = list(self._screen.display)
+
+        if self._prev_snapshot is None:
+            # First read: return all non-empty lines
+            self._prev_snapshot = current
+            changed_lines = [
+                {"line": i + 1, "content": line}
+                for i, line in enumerate(current)
+                if line.strip()
+            ]
+            formatted = "\n".join(line.rstrip() for line in current).rstrip("\n")
+            return formatted, len(formatted.encode("utf-8")), changed_lines, True
+
+        # Subsequent reads: compare line-by-line
+        prev = self._prev_snapshot
+        max_lines = max(len(current), len(prev))
+        changed_indices: list[int] = []
+
+        for i in range(max_lines):
+            if i >= len(prev):
+                # Screen grew — new line is a change
+                changed_indices.append(i)
+            elif i >= len(current):
+                # Screen shrank — previously existing line is gone (skip)
+                continue
+            elif current[i] != prev[i]:
+                changed_indices.append(i)
+
+        changed_lines = [
+            {"line": i + 1, "content": current[i]}
+            for i in changed_indices
+        ]
+        formatted = "\n".join(entry["content"] for entry in changed_lines)
+        self._prev_snapshot = current
+        return formatted, len(formatted.encode("utf-8")), changed_lines, False
 
     def read_scrollback(self, lines_back: int = 0) -> tuple[str, int]:
         """
@@ -308,9 +396,6 @@ class PTYSession:
 
         Returns: (display_text, total_lines)
         """
-        if self._screen is None:
-            return "", 0
-
         current_lines = [line.rstrip() for line in self._screen.display]
 
         if lines_back > 0 and hasattr(self._screen, 'history'):
