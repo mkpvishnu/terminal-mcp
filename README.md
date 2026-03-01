@@ -45,6 +45,10 @@ terminal-mcp fills this gap by exposing MCP tools that create and manage real PT
 ## Features
 
 - **Persistent PTY sessions** — real terminal sessions that survive across tool calls
+- **Send + read in one call** — `session_interact` combines send and read, halving LLM round trips
+- **Regex-triggered reads** — `session_wait_for` blocks until a pattern matches in output — no more guessing timeouts
+- **Dangerous command gate** — detects risky commands (`rm -rf`, `DROP TABLE`, `curl|sh`, etc.) and requires confirmation
+- **OSC 133 shell integration** — auto-detects command boundaries and exit codes from modern shells
 - **Special key support** — arrow keys, Tab, Escape, function keys (F1–F12), Home/End, Page Up/Down
 - **Control characters** — Ctrl-C, Ctrl-D, Ctrl-Z, Ctrl-L, and telnet escape
 - **Two read modes** — stream (waits for output to settle) and snapshot (pyte screen buffer for TUI apps)
@@ -202,6 +206,43 @@ session_exec  exec="python3 -c 'print(42)'"  command="bash"  timeout=10.0
 </details>
 
 <details>
+<summary><strong>Send + read in one call (session_interact)</strong></summary>
+
+```
+session_create   command="bash"  label="demo"
+session_interact session_id="a1b2c3d4"  input="ls -la"  wait_for="\\$\\s*$"  timeout=5.0
+session_interact session_id="a1b2c3d4"  input="whoami"  wait_for="\\$"
+session_close    session_id="a1b2c3d4"
+```
+
+</details>
+
+<details>
+<summary><strong>Wait for specific output pattern</strong></summary>
+
+```
+session_create   command="bash"  label="build"
+session_send     session_id="a1b2c3d4"  input="npm run build"
+session_wait_for session_id="a1b2c3d4"  pattern="Build complete|ERROR"  timeout=60.0
+session_close    session_id="a1b2c3d4"
+```
+
+</details>
+
+<details>
+<summary><strong>Dangerous command confirmation</strong></summary>
+
+```
+session_send    session_id="a1b2c3d4"  input="rm -rf /tmp/old"
+→ returns: requires_confirmation=true, reason="Matched dangerous pattern: ..."
+
+session_send    session_id="a1b2c3d4"  input="rm -rf /tmp/old"  confirmed=true
+→ executes the command
+```
+
+</details>
+
+<details>
 <summary><strong>Sending Ctrl-C to interrupt</strong></summary>
 
 ```
@@ -241,8 +282,9 @@ Send input text, a control character, or a special key to an active session. Onl
 | `control_char` | string | No | — | Control character: `c` `d` `z` `l` `]` |
 | `key` | string | No | — | Special key (see table below) |
 | `password` | string | No | — | Password or secret (not logged) |
+| `confirmed` | boolean | No | false | Bypass dangerous command gate |
 
-**Returns:** `bytes_sent`
+**Returns:** `bytes_sent` — or `requires_confirmation`, `reason` if the command matches a dangerous pattern
 
 <details>
 <summary>Supported special keys</summary>
@@ -297,7 +339,7 @@ Read output from a session.
 | `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
 | `scrollback` | integer | No | — | Lines of scrollback history (snapshot mode) |
 
-**Returns:** `output`, `bytes_read`, `prompt_detected`, `is_alive`, `truncated`, `total_lines` (when scrollback used)
+**Returns:** `output`, `bytes_read`, `prompt_detected`, `is_alive`, `truncated`, `total_lines` (when scrollback used), `osc133`, `command_state`, `exit_code`, `command_complete` (when shell integration detected)
 
 ### session_close
 
@@ -322,6 +364,38 @@ Execute a command in a temporary session and return output. The session is autom
 | `cols` | integer | No | 80 | Terminal width |
 
 **Returns:** `output`, `bytes_read`, `session_id`
+
+### session_interact
+
+Send input and read output in a single call. Combines `session_send` + `session_read` to halve round trips. Optionally waits for a regex pattern in the output.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | Yes | — | Session ID |
+| `input` | string | No | — | Text to send |
+| `press_enter` | boolean | No | true | Append carriage return after input |
+| `control_char` | string | No | — | Control character: `c` `d` `z` `l` `]` |
+| `key` | string | No | — | Special key (see session_send) |
+| `password` | string | No | — | Password or secret (not logged) |
+| `wait_for` | string | No | — | Regex pattern to wait for in output |
+| `timeout` | number | No | 5.0 | Seconds to wait for output |
+| `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
+| `confirmed` | boolean | No | false | Bypass dangerous command gate |
+
+**Returns:** `output`, `bytes_read`, `bytes_sent`, `matched` (when `wait_for` used), `prompt_detected`, `is_alive`, `truncated`
+
+### session_wait_for
+
+Read output from a session until a regex pattern matches or timeout expires. Use this instead of `session_read` when you know what output to expect.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | Yes | — | Session ID |
+| `pattern` | string | Yes | — | Regex pattern to wait for in output |
+| `timeout` | number | No | 30.0 | Max seconds to wait |
+| `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
+
+**Returns:** `output`, `bytes_read`, `matched`, `prompt_detected`, `is_alive`, `truncated`
 
 ### session_list
 
@@ -380,10 +454,19 @@ All settings can be overridden via environment variables prefixed with `TERMINAL
 | `read_settle_timeout` | `TERMINAL_MCP_READ_SETTLE_TIMEOUT` | `2.0` | Output settle timeout |
 | `max_output_bytes` | `TERMINAL_MCP_MAX_OUTPUT_BYTES` | `100000` | Max bytes per read |
 | `cleanup_interval` | `TERMINAL_MCP_CLEANUP_INTERVAL` | `60` | Seconds between cleanup |
+| `safety_gate` | `TERMINAL_MCP_SAFETY_GATE` | `on` | Dangerous command gate (`off` to disable) |
+| `dangerous_patterns` | `TERMINAL_MCP_DANGEROUS_PATTERNS` | built-in | Extra patterns (semicolon-separated regexes) |
 
 Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `session_create`.
 
 ## Changelog
+
+### v0.4.0
+
+- **`session_interact` tool** — send input and read output in a single MCP call, halving round trips. Supports all input types (text, keys, control chars, passwords) with optional `wait_for` regex pattern
+- **`session_wait_for` tool** — block until a regex pattern matches in session output or timeout expires. Replaces fragile timeout-based reads when you know what to expect
+- **Dangerous command gate** — detects risky commands (`rm -rf`, `DROP TABLE`, `curl|sh`, `chmod 777`, etc.) and returns `requires_confirmation` instead of executing. Resend with `confirmed=true` to proceed. 17 built-in patterns, extensible via `TERMINAL_MCP_DANGEROUS_PATTERNS` env var, disable with `TERMINAL_MCP_SAFETY_GATE=off`
+- **OSC 133 shell integration** — auto-detects command boundary markers emitted by modern shells (bash 5.2+, zsh, fish). When detected, read responses include `command_state`, `exit_code`, and `command_complete` fields for precise command completion tracking
 
 ### v0.3.3
 
