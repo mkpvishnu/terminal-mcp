@@ -1,0 +1,188 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  version-bump:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    outputs:
+      new_version: ${{ steps.version.outputs.new_version }}
+      tag: ${{ steps.version.outputs.tag }}
+      bump_type: ${{ steps.bump.outputs.type }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine bump type
+        id: bump
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = context.payload.pull_request.labels.map(l => l.name);
+            const majorLabels = ['major'];
+            const minorLabels = ['minor', 'feature'];
+            const patchLabels = ['patch', 'bug', 'dependencies'];
+
+            let bump = '';
+            if (labels.some(l => majorLabels.includes(l))) bump = 'major';
+            else if (labels.some(l => minorLabels.includes(l))) bump = 'minor';
+            else if (labels.some(l => patchLabels.includes(l))) bump = 'patch';
+
+            if (!bump) {
+              core.setFailed('No valid release label found on PR');
+              return;
+            }
+
+            core.setOutput('type', bump);
+            core.info(`Bump type: ${bump}`);
+
+      - name: Calculate new version
+        id: version
+        run: |
+          CURRENT=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          BUMP_TYPE="${{ steps.bump.outputs.type }}"
+          case "$BUMP_TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Bumping $CURRENT → $NEW_VERSION ($BUMP_TYPE)"
+
+      - name: Bump version in all files
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          # 1. pyproject.toml — update version string
+          sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
+
+          # 2. banner.svg — update version in bottom text
+          sed -i "s/v[0-9]*\.[0-9]*\.[0-9]*/v$NEW_VERSION/" assets/banner.svg
+
+          # 3. server.json — update both version fields using python3 for safe JSON handling
+          python3 - "$NEW_VERSION" <<'PYEOF'
+          import json, sys
+          v = sys.argv[1]
+          with open("server.json", "r") as f:
+              data = json.load(f)
+          data["version"] = v
+          for pkg in data.get("packages", []):
+              pkg["version"] = v
+          with open("server.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          PYEOF
+
+          # 4. README.md — insert changelog entry after "## Changelog" heading
+          python3 <<'PYEOF'
+          import os, sys
+          version = os.environ["NEW_VERSION"]
+          title = os.environ["PR_TITLE"]
+          number = os.environ["PR_NUMBER"]
+          url = os.environ["PR_URL"]
+          entry = f"\n### v{version}\n\n- **{title}** ([#{number}]({url}))\n"
+          with open("README.md", "r") as f:
+              content = f.read()
+          marker = "## Changelog"
+          idx = content.find(marker)
+          if idx == -1:
+              print("WARNING: '## Changelog' not found in README.md")
+              sys.exit(0)
+          insert_at = idx + len(marker)
+          content = content[:insert_at] + "\n" + entry + content[insert_at:]
+          with open("README.md", "w") as f:
+              f.write(content)
+          PYEOF
+
+          echo "Bumped: pyproject.toml, banner.svg, server.json, README.md"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml assets/banner.svg server.json README.md
+          git commit -m "release: v${{ steps.version.outputs.new_version }}"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin main --follow-tags
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.version.outputs.tag }}';
+            const version = '${{ steps.version.outputs.new_version }}';
+            const prTitle = context.payload.pull_request.title;
+            const prNumber = context.payload.pull_request.number;
+            const prUrl = context.payload.pull_request.html_url;
+
+            const body = `### What's Changed\n\n- **${prTitle}** ([#${prNumber}](${prUrl}))\n\n**Full Changelog**: https://github.com/${context.repo.owner}/${context.repo.repo}/compare/v${{ steps.version.outputs.current }}...${tag}`;
+
+            try {
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: tag,
+                body: body,
+                draft: false,
+                prerelease: false,
+              });
+              core.info(`Created release ${tag}`);
+            } catch (error) {
+              if (error.status === 422) {
+                core.info(`Release ${tag} already exists, skipping`);
+              } else {
+                throw error;
+              }
+            }
+
+  publish:
+    needs: version-bump
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.version-bump.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

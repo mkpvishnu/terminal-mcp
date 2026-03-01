@@ -1,0 +1,25 @@
+name: Check Release Label
+
+on:
+  pull_request:
+    types: [opened, labeled, unlabeled, synchronize]
+    branches:
+      - main
+
+jobs:
+  check-label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const validLabels = ['patch', 'bug', 'dependencies', 'minor', 'feature', 'major'];
+            const prLabels = context.payload.pull_request.labels;
+            const found = prLabels.map(l => l.name).filter(n => validLabels.includes(n));
+            if (found.length === 0) {
+              core.setFailed('PR must have exactly one release label: patch, bug, dependencies, minor, feature, or major');
+            } else if (found.length > 1) {
+              core.setFailed('PR has multiple release labels: ' + found.join(', ') + '. Please use exactly one.');
+            } else {
+              core.info('Release label: ' + found[0]);
+            }
