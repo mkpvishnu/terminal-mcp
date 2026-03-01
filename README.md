@@ -569,6 +569,11 @@ TERMINAL_MCP_MAX_SESSIONS=20 TERMINAL_MCP_SAFETY_GATE=off uvx terminal-mcp
 
 ## Changelog
 
+### v0.4.5
+
+- **Remove stale publish.yml workflow** ([#13](https://github.com/mkpvishnu/terminal-mcp/pull/13))
+
+
 ### v0.4.4
 
 - **Fix release push: use RELEASE_TOKEN for branch protection bypass** ([#12](https://github.com/mkpvishnu/terminal-mcp/pull/12))
