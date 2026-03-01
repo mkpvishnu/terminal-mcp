@@ -84,6 +84,7 @@ class PTYSession:
         self._buffer: bytearray = bytearray()
         self._buffer_lock = threading.Lock()
         self._read_position: int = 0  # tracks where the caller last read to
+        self._total_bytes_written: int = 0  # monotonic absolute byte counter
 
         # pyte virtual terminal (always initialised)
         if scrollback_lines > 0:
@@ -120,6 +121,7 @@ class PTYSession:
                     self._detect_alt_screen(data)
                     with self._buffer_lock:
                         self._buffer.extend(data)
+                        self._total_bytes_written += len(data)
                         if len(self._buffer) > self._max_buffer_bytes:
                             trim = len(self._buffer) - self._max_buffer_bytes
                             del self._buffer[:trim]
@@ -415,32 +417,72 @@ class PTYSession:
         text = "\n".join(all_lines)
         return text, len(all_lines)
 
+    def current_buffer_end(self) -> int:
+        """Return the total absolute bytes written so far (thread-safe, monotonically increasing).
+
+        This is an absolute byte count, not a buffer-relative index.  Because
+        the reader thread can trim the buffer when it exceeds max_buffer_bytes,
+        using len(self._buffer) as a position would become invalid after a trim.
+        _total_bytes_written never decreases, so a snapshot taken before send()
+        remains a valid anchor even if the buffer is trimmed afterward.
+        """
+        with self._buffer_lock:
+            return self._total_bytes_written
+
     def read_until_pattern(
         self,
         pattern: str,
         timeout: float = 30.0,
         strip_ansi_output: bool = True,
+        start_position: Optional[int] = None,
     ) -> tuple[str, int, bool, bool]:
         """
         Read output until pattern matches or timeout expires.
+
+        Args:
+            pattern: Regex pattern to match.
+            timeout: Maximum seconds to wait.
+            strip_ansi_output: Whether to strip ANSI codes before matching.
+            start_position: If provided, an *absolute* byte count (as returned by
+                current_buffer_end()) from which to start matching.  Used by
+                session_interact to skip command echo and stale pre-existing
+                buffer content.  Because _total_bytes_written is monotonically
+                increasing and never reset by a buffer trim, this anchor remains
+                valid even if the reader thread trims old bytes out of _buffer.
+
+                When None, the existing _read_position (buffer-relative) is used.
 
         Returns: (output_text, bytes_read, matched, prompt_detected)
         """
         compiled = re.compile(pattern)
         deadline = time.time() + timeout
 
-        # Snapshot the start position
-        with self._buffer_lock:
-            start_pos = self._read_position
+        # Determine which mode we operate in:
+        #   use_absolute=True  → start_position is an absolute byte count;
+        #                         we convert to buffer-relative on every iteration.
+        #   use_absolute=False → start_pos is buffer-relative, maintained here.
+        use_absolute = start_position is not None
+        if not use_absolute:
+            with self._buffer_lock:
+                start_pos = self._read_position
+        # (if use_absolute, start_position is used directly inside the loop)
 
         accumulated_text = ""
 
         while time.time() < deadline:
             with self._buffer_lock:
-                # Re-clamp start_pos in case the reader thread trimmed the
-                # buffer since the last iteration (stale pointer guard).
-                start_pos = min(start_pos, len(self._buffer))
-                new_data = bytes(self._buffer[start_pos:])
+                if use_absolute:
+                    # Convert absolute anchor to a buffer-relative index.
+                    # buffer_start_abs is the absolute position of _buffer[0].
+                    # If the anchor predates the surviving buffer, clamp to 0
+                    # (some bytes were trimmed — we see what remains from start).
+                    buffer_start_abs = self._total_bytes_written - len(self._buffer)
+                    rel_start = max(0, start_position - buffer_start_abs)
+                    new_data = bytes(self._buffer[rel_start:])
+                else:
+                    # Re-clamp in case the reader trimmed the buffer.
+                    start_pos = min(start_pos, len(self._buffer))
+                    new_data = bytes(self._buffer[start_pos:])
 
             if new_data:
                 decoded = new_data.decode('utf-8', errors='replace')
@@ -449,10 +491,15 @@ class PTYSession:
                 accumulated_text = decoded
 
                 if compiled.search(accumulated_text):
-                    # Update read position
+                    # Update read position — never move it backward
                     with self._buffer_lock:
-                        actual_new_data = bytes(self._buffer[start_pos:])
-                        self._read_position = len(self._buffer)
+                        if use_absolute:
+                            buffer_start_abs = self._total_bytes_written - len(self._buffer)
+                            rel_start = max(0, start_position - buffer_start_abs)
+                            actual_new_data = bytes(self._buffer[rel_start:])
+                        else:
+                            actual_new_data = bytes(self._buffer[start_pos:])
+                        self._read_position = max(self._read_position, len(self._buffer))
                     prompt_detected = detect_prompt(accumulated_text)
                     return accumulated_text, len(actual_new_data), True, prompt_detected
 
@@ -462,10 +509,15 @@ class PTYSession:
 
             time.sleep(0.05)
 
-        # Timeout expired or process died
+        # Timeout expired or process died — return whatever we collected
         with self._buffer_lock:
-            actual_new_data = bytes(self._buffer[start_pos:])
-            self._read_position = len(self._buffer)
+            if use_absolute:
+                buffer_start_abs = self._total_bytes_written - len(self._buffer)
+                rel_start = max(0, start_position - buffer_start_abs)
+                actual_new_data = bytes(self._buffer[rel_start:])
+            else:
+                actual_new_data = bytes(self._buffer[start_pos:])
+            self._read_position = max(self._read_position, len(self._buffer))
 
         if not accumulated_text and actual_new_data:
             accumulated_text = actual_new_data.decode('utf-8', errors='replace')
