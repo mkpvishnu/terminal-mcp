@@ -51,7 +51,10 @@ terminal-mcp fills this gap by exposing MCP tools that create and manage real PT
 - **OSC 133 shell integration** — auto-detects command boundaries and exit codes from modern shells
 - **Special key support** — arrow keys, Tab, Escape, function keys (F1–F12), Home/End, Page Up/Down
 - **Control characters** — Ctrl-C, Ctrl-D, Ctrl-Z, Ctrl-L, and telnet escape
-- **Two read modes** — stream (waits for output to settle) and snapshot (pyte screen buffer for TUI apps)
+- **Four read modes** — stream (waits for output to settle), snapshot (pyte screen buffer), auto (auto-detects TUI apps), and diff (returns only changed screen lines)
+- **Auto TUI detection** — automatically detects alternate screen buffer (htop, vim, etc.) and switches to snapshot mode
+- **Output diff mode** — returns only changed lines since last read, minimizing tokens for TUI monitoring
+- **Intelligent truncation** — four truncation modes: `tail` (default), `head_tail` (preserves beginning and end), `tail_only` (for build logs), `none`
 - **ANSI stripping** — optional removal of escape sequences for clean text output
 - **Idle cleanup** — automatic session cleanup after configurable timeout
 - **Session management** — list, label, and manage multiple concurrent sessions
@@ -59,7 +62,7 @@ terminal-mcp fills this gap by exposing MCP tools that create and manage real PT
 - **Secret input** — send passwords without logging them
 - **Scrollback history** — access terminal scrollback buffer beyond the visible screen
 - **One-shot execution** — run a single command without manual session management
-- **Output truncation** — automatic truncation of large outputs to prevent context overflow
+- **Smart output truncation** — four truncation strategies (`tail`, `head_tail`, `tail_only`, `none`) to prevent context overflow while preserving the most useful output
 - **Env var configuration** — configure all settings via `TERMINAL_MCP_*` environment variables
 - **PyPI distribution** — install directly with `pip install terminal-mcp`
 
@@ -196,6 +199,25 @@ session_close   session_id="x1y2z3w4"
 </details>
 
 <details>
+<summary><strong>Auto TUI detection and diff mode</strong></summary>
+
+```
+session_create   command="htop"  label="monitor"
+session_read     session_id="a1b2c3d4"
+→ auto-detects TUI, returns snapshot with mode_used="snapshot", tui_active=true
+
+session_read     session_id="a1b2c3d4"  mode="diff"
+→ returns only changed lines since last read
+
+session_read     session_id="a1b2c3d4"  mode="diff"
+→ returns only lines that changed, minimizing tokens
+
+session_close    session_id="a1b2c3d4"
+```
+
+</details>
+
+<details>
 <summary><strong>One-shot command execution</strong></summary>
 
 ```
@@ -265,10 +287,10 @@ Spawn a persistent PTY terminal session.
 | `rows` | integer | No | 24 | Terminal height |
 | `cols` | integer | No | 80 | Terminal width |
 | `idle_timeout` | integer | No | 1800 | Seconds before auto-close |
-| `enable_snapshot` | boolean | No | false | Enable pyte screen buffer for snapshot reads |
-| `scrollback_lines` | integer | No | 1000 | Scrollback history lines (requires enable_snapshot) |
+| `enable_snapshot` | boolean | No | true | Deprecated: snapshot is now always enabled |
+| `scrollback_lines` | integer | No | 1000 | Scrollback history lines |
 
-**Returns:** `session_id`, `label`, `pid`, `created_at`
+**Returns:** `session_id`, `label`, `pid`, `created_at`, `snapshot_available`
 
 ### session_send
 
@@ -334,12 +356,13 @@ Read output from a session.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `session_id` | string | Yes | — | Session ID |
-| `mode` | string | No | `stream` | `stream` or `snapshot` |
-| `timeout` | number | No | 2.0 | Settle timeout in seconds (stream mode) |
+| `mode` | string | No | `auto` | `auto`, `stream`, `snapshot`, or `diff` |
+| `timeout` | number | No | 2.0 | Settle timeout in seconds (stream/auto mode) |
 | `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
 | `scrollback` | integer | No | — | Lines of scrollback history (snapshot mode) |
+| `truncation` | string | No | config default | Truncation mode: `tail`, `head_tail`, `tail_only`, `none` |
 
-**Returns:** `output`, `bytes_read`, `prompt_detected`, `is_alive`, `truncated`, `total_lines` (when scrollback used), `osc133`, `command_state`, `exit_code`, `command_complete` (when shell integration detected)
+**Returns:** `output`, `bytes_read`, `prompt_detected`, `is_alive`, `truncated`, `tui_active`, `snapshot_available`, `mode_used`, `changed_lines` (diff mode), `is_first_read` (diff mode), `total_lines` (scrollback), `osc133`, `command_state`, `exit_code`, `command_complete` (shell integration)
 
 ### session_close
 
@@ -362,8 +385,9 @@ Execute a command in a temporary session and return output. The session is autom
 | `timeout` | number | No | 5.0 | Seconds to wait for output |
 | `rows` | integer | No | 24 | Terminal height |
 | `cols` | integer | No | 80 | Terminal width |
+| `truncation` | string | No | config default | Truncation mode: `tail`, `head_tail`, `tail_only`, `none` |
 
-**Returns:** `output`, `bytes_read`, `session_id`
+**Returns:** `output`, `bytes_read`, `session_id`, `truncated`
 
 ### session_interact
 
@@ -381,8 +405,10 @@ Send input and read output in a single call. Combines `session_send` + `session_
 | `timeout` | number | No | 5.0 | Seconds to wait for output |
 | `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
 | `confirmed` | boolean | No | false | Bypass dangerous command gate |
+| `read_mode` | string | No | `stream` | Read mode: `auto`, `stream`, `snapshot`, `diff` |
+| `truncation` | string | No | config default | Truncation mode: `tail`, `head_tail`, `tail_only`, `none` |
 
-**Returns:** `output`, `bytes_read`, `bytes_sent`, `matched` (when `wait_for` used), `prompt_detected`, `is_alive`, `truncated`
+**Returns:** `output`, `bytes_read`, `bytes_sent`, `matched` (when `wait_for` used), `prompt_detected`, `is_alive`, `truncated`, `tui_active`, `mode_used`, `snapshot_available`
 
 ### session_wait_for
 
@@ -394,6 +420,7 @@ Read output from a session until a regex pattern matches or timeout expires. Use
 | `pattern` | string | Yes | — | Regex pattern to wait for in output |
 | `timeout` | number | No | 30.0 | Max seconds to wait |
 | `strip_ansi` | boolean | No | true | Strip ANSI escape sequences |
+| `truncation` | string | No | config default | Truncation mode: `tail`, `head_tail`, `tail_only`, `none` |
 
 **Returns:** `output`, `bytes_read`, `matched`, `prompt_detected`, `is_alive`, `truncated`
 
@@ -401,7 +428,7 @@ Read output from a session until a regex pattern matches or timeout expires. Use
 
 List all active sessions with their status and idle time.
 
-**Returns:** `sessions` (array), `count`
+**Returns:** `sessions` (array with `tui_active`, `snapshot_available` per session), `count`
 
 ## Architecture
 
@@ -437,7 +464,7 @@ Each session is backed by a real PTY allocated via `pexpect.spawn`. The design h
 
 **Output settling (stream mode).** `session_read` in stream mode polls the buffer until no new bytes have arrived for `timeout` seconds (default 2s), then returns everything written since the last read call. A hard ceiling of `timeout + 10s` prevents infinite blocking.
 
-**Snapshot mode.** When a session is created with `enable_snapshot=true`, all PTY output is also fed into a `pyte` virtual screen buffer. `session_read` with `mode="snapshot"` returns the current rendered screen — useful for programs that use cursor movement (vim, htop, ncdu).
+**Snapshot mode (always on).** All PTY output is fed into a `pyte` virtual screen buffer. In `auto` mode (the default), `session_read` automatically detects TUI applications via alternate screen buffer sequences and returns a rendered snapshot. The `diff` mode returns only changed lines since the last read, minimizing tokens for TUI monitoring.
 
 **Idle cleanup.** `SessionManager` runs a background cleanup loop (every 60s by default) that closes sessions idle longer than their `idle_timeout`. The default timeout is 30 minutes. Concurrent sessions are capped at 10 by default.
 
@@ -456,10 +483,21 @@ All settings can be overridden via environment variables prefixed with `TERMINAL
 | `cleanup_interval` | `TERMINAL_MCP_CLEANUP_INTERVAL` | `60` | Seconds between cleanup |
 | `safety_gate` | `TERMINAL_MCP_SAFETY_GATE` | `on` | Dangerous command gate (`off` to disable) |
 | `dangerous_patterns` | `TERMINAL_MCP_DANGEROUS_PATTERNS` | built-in | Extra patterns (semicolon-separated regexes) |
+| `truncation_mode` | `TERMINAL_MCP_TRUNCATION_MODE` | `tail` | Default truncation strategy (`tail`, `head_tail`, `tail_only`, `none`) |
 
 Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `session_create`.
 
 ## Changelog
+
+### v0.4.1
+
+- **Auto TUI detection** — automatically detects alternate screen buffer sequences (`ESC[?1049h`, `ESC[?47h`, `ESC[?1047h`) and switches `session_read` to snapshot mode. New `mode="auto"` is now the default
+- **Output diff mode** — `session_read` with `mode="diff"` returns only changed screen lines since last read, with 1-indexed line numbers and `is_first_read` flag
+- **Intelligent truncation** — new `truncate_output_smart()` with four strategies: `tail` (keep beginning), `head_tail` (keep first 30% + last 70% with line-count marker), `tail_only` (keep end, ideal for build logs), `none` (disable truncation). Configurable via `truncation` parameter on all read tools or `TERMINAL_MCP_TRUNCATION_MODE` env var
+- **Always-on pyte** — snapshot mode is now always initialized (no need for `enable_snapshot=true`). `enable_snapshot` parameter deprecated
+- **`read_mode` on session_interact** — choose how output is read back: `auto`, `stream`, `snapshot`, or `diff`
+- **Thread-safe screen reads** — `read_snapshot()` and `read_diff()` now acquire buffer lock before reading pyte screen
+- Response fields: `tui_active`, `snapshot_available`, `mode_used` added to read responses; `snapshot_available` added to create and list responses
 
 ### v0.4.0
 
