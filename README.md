@@ -569,6 +569,11 @@ TERMINAL_MCP_MAX_SESSIONS=20 TERMINAL_MCP_SAFETY_GATE=off uvx terminal-mcp
 
 ## Changelog
 
+### v0.4.4
+
+- **Fix release push: use RELEASE_TOKEN for branch protection bypass** ([#12](https://github.com/mkpvishnu/terminal-mcp/pull/12))
+
+
 ### v0.4.3
 
 - **Fix `wait_for` matching command echo** — `session_interact` with `wait_for` no longer matches the echoed input text. Pattern matching now starts from a buffer position anchored before the send, so only genuinely new output is matched (fixes [#6](https://github.com/mkpvishnu/terminal-mcp/issues/6))
