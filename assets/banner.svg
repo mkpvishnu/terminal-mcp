@@ -66,5 +66,5 @@
   <rect class="cursor" x="346" y="213" width="9" height="17" rx="1" fill="#56d4dd" opacity="0.85"/>
 
   <!-- Subtle bottom decoration -->
-  <text x="400" y="260" text-anchor="middle" font-family="monospace" font-size="11" fill="#3d4059">v0.4.2  |  Python 3.10+  |  MIT License</text>
+  <text x="400" y="260" text-anchor="middle" font-family="monospace" font-size="11" fill="#3d4059">v0.4.3  |  Python 3.10+  |  MIT License</text>
 </svg>

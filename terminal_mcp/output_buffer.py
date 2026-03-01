@@ -2,14 +2,20 @@
 
 import re
 
-# Comprehensive ANSI escape sequence pattern
+# Comprehensive ANSI escape sequence pattern.
+# Order matters: longer / more-specific alternatives must come first so that
+# the regex engine does not stop at an incomplete prefix.
 ANSI_PATTERN = re.compile(
-    r'\x1b\[[0-9;]*[a-zA-Z]'      # CSI sequences: ESC [ ... letter
-    r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'  # OSC sequences: ESC ] ... BEL or ST
-    r'|\x1b[()][AB012]'            # Charset sequences: ESC ( x
-    r'|\x1b\[[\?]?[0-9;]*[hlm]'   # Mode sequences: ESC [ ? ... h/l/m
-    r'|\x1b[A-Z]'                  # Single-letter ESC sequences
-    r'|\x0f|\x0e'                   # Shift in/out
+    r'\x1b\]'                               # OSC: ESC ] ... BEL or ST
+    r'[^\x07\x1b]*(?:\x07|\x1b\\)'
+    r'|\x1bP[^\x1b]*\x1b\\'                 # DCS: ESC P ... ST
+    r'|\x1b\[[?>=!]?[0-9;]*[a-zA-Z~]'      # CSI: ESC [ [?>=!] params letter/~
+    r'|\x1b\[[0-9;]*"[a-zA-Z]'             # CSI with " introducer to final char
+    r'|\x1b[()][AB012]'                     # Charset: ESC ( x  /  ESC ) x
+    r'|\x1b[>=]'                            # App keypad/cursor mode: ESC > or ESC =
+    r'|\x1b[A-Z\\^_@]'                      # Single-char uppercase ESC sequences
+    r'|\x1b[a-z]'                           # Single-char lowercase ESC sequences (e.g. ESC c = RIS)
+    r'|\x0f|\x0e'                           # Shift-In / Shift-Out (SI / SO)
 )
 
 # Prompt detection pattern: ends with common prompt chars or contains user@host

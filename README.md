@@ -372,7 +372,7 @@ Terminate a session gracefully (EOF → SIGHUP → SIGKILL).
 |-----------|------|----------|-------------|
 | `session_id` | string | Yes | Session ID to close |
 
-**Returns:** `exit_status`
+**Returns:** `exit_status` — or `already_closed: true` if the session was already terminated (idempotent)
 
 ### session_exec
 
@@ -481,13 +481,100 @@ All settings can be overridden via environment variables prefixed with `TERMINAL
 | `read_settle_timeout` | `TERMINAL_MCP_READ_SETTLE_TIMEOUT` | `2.0` | Output settle timeout |
 | `max_output_bytes` | `TERMINAL_MCP_MAX_OUTPUT_BYTES` | `100000` | Max bytes per read |
 | `cleanup_interval` | `TERMINAL_MCP_CLEANUP_INTERVAL` | `60` | Seconds between cleanup |
+| `max_buffer_bytes` | `TERMINAL_MCP_MAX_BUFFER_BYTES` | `1000000` | Per-session PTY buffer cap in bytes |
 | `safety_gate` | `TERMINAL_MCP_SAFETY_GATE` | `on` | Dangerous command gate (`off` to disable) |
 | `dangerous_patterns` | `TERMINAL_MCP_DANGEROUS_PATTERNS` | built-in | Extra patterns (semicolon-separated regexes) |
 | `truncation_mode` | `TERMINAL_MCP_TRUNCATION_MODE` | `tail` | Default truncation strategy (`tail`, `head_tail`, `tail_only`, `none`) |
 
-Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `session_create`.
+**Per-session parameters:** `rows`, `cols`, `idle_timeout`, and `scrollback_lines` can be set per session via `session_create`. There is no global env var for `scrollback_lines` — it defaults to `1000` lines per session. Set `scrollback_lines=0` to disable scrollback history.
+
+### How to Set Environment Variables
+
+Since terminal-mcp runs as a subprocess of your MCP client, environment variables must be configured in the client's MCP server configuration — not in your shell profile (`.bashrc`, `.zshrc`, etc.).
+
+**Claude Code** (`~/.claude.json` or project `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "terminal": {
+      "command": "uvx",
+      "args": ["terminal-mcp"],
+      "env": {
+        "TERMINAL_MCP_MAX_SESSIONS": "20",
+        "TERMINAL_MCP_IDLE_TIMEOUT": "3600",
+        "TERMINAL_MCP_SAFETY_GATE": "off",
+        "TERMINAL_MCP_TRUNCATION_MODE": "head_tail"
+      }
+    }
+  }
+}
+```
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "terminal": {
+      "command": "uvx",
+      "args": ["terminal-mcp"],
+      "env": {
+        "TERMINAL_MCP_MAX_SESSIONS": "20",
+        "TERMINAL_MCP_IDLE_TIMEOUT": "3600"
+      }
+    }
+  }
+}
+```
+
+**VS Code / Cursor** (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "terminal-mcp": {
+      "command": "uvx",
+      "args": ["terminal-mcp"],
+      "env": {
+        "TERMINAL_MCP_MAX_SESSIONS": "20",
+        "TERMINAL_MCP_IDLE_TIMEOUT": "3600"
+      }
+    }
+  }
+}
+```
+
+**Windsurf** (`~/.codeium/windsurf/mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "terminal": {
+      "command": "uvx",
+      "args": ["terminal-mcp"],
+      "env": {
+        "TERMINAL_MCP_MAX_SESSIONS": "20"
+      }
+    }
+  }
+}
+```
+
+You can also set env vars directly in your shell when running the server manually for testing:
+
+```bash
+TERMINAL_MCP_MAX_SESSIONS=20 TERMINAL_MCP_SAFETY_GATE=off uvx terminal-mcp
+```
 
 ## Changelog
+
+### v0.4.3
+
+- **Fix `wait_for` matching command echo** — `session_interact` with `wait_for` no longer matches the echoed input text. Pattern matching now starts from a buffer position anchored before the send, so only genuinely new output is matched (fixes [#6](https://github.com/mkpvishnu/terminal-mcp/issues/6))
+- **Fix `wait_for` matching stale buffer content** — `session_interact` with `wait_for` no longer matches pre-existing unread buffer content (startup banners, previous command output). Uses a monotonic absolute byte counter that survives buffer trims (fixes [#7](https://github.com/mkpvishnu/terminal-mcp/issues/7))
+- **Idempotent `session_close`** — closing an already-closed or naturally-exited session now returns `success: true, already_closed: true` instead of a `not_found` error. Safe for `finally`-style cleanup (fixes [#8](https://github.com/mkpvishnu/terminal-mcp/issues/8))
+- **Comprehensive ANSI stripping** — `strip_ansi` now handles Kitty keyboard protocol sequences, application keypad mode (`ESC=`/`ESC>`), DCS sequences, secondary DA responses, and tilde-terminated CSI sequences that leaked through during TUI exit transitions (fixes [#9](https://github.com/mkpvishnu/terminal-mcp/issues/9))
 
 ### v0.4.2
 

@@ -298,10 +298,13 @@ async def handle_session_close(manager: "SessionManager", arguments: dict) -> di
             "success": True,
             "exit_status": exit_status,
         }
-    except KeyError as e:
+    except KeyError:
+        # Session was already removed (by cleanup thread, natural death, or a
+        # previous close call).  Treat this as success so callers can close
+        # idempotently without error handling (fixes Issue #8).
         return {
-            "success": False,
-            "error": {"type": "not_found", "message": str(e)},
+            "success": True,
+            "already_closed": True,
         }
     except Exception as e:
         logger.exception("Error closing session %s", session_id)
@@ -529,6 +532,16 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
     try:
         bytes_sent = 0
 
+        # Snapshot the absolute buffer position BEFORE sending anything.
+        # The PTY echo physically cannot appear in the buffer until after
+        # send() writes to the fd, so any bytes already in the buffer at
+        # this point are guaranteed to be pre-existing content.  Using this
+        # anchor in read_until_pattern means we never match stale content
+        # and we never need an arbitrary sleep to wait for the echo to land.
+        pre_send_pos = None
+        if wait_for is not None:
+            pre_send_pos = await asyncio.to_thread(session.current_buffer_end)
+
         if control_char is not None:
             valid_chars = {'c', 'd', 'z', 'l', ']'}
             if control_char not in valid_chars:
@@ -569,6 +582,7 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
                 pattern=wait_for,
                 timeout=timeout,
                 strip_ansi_output=strip_ansi_flag,
+                start_position=pre_send_pos,
             )
         elif read_mode == "auto":
             output, bytes_read, prompt_detected, mode_used = await asyncio.to_thread(
