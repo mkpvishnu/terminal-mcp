@@ -57,7 +57,7 @@ TOOLS = [
         description=(
             "Spawn a persistent PTY terminal session. Returns a session_id used by "
             "all other session_* tools. Supports interactive shells, SSH, REPLs, "
-            "and database CLIs."
+            "and database CLIs. Snapshot mode is always available."
         ),
         inputSchema={
             "type": "object",
@@ -87,12 +87,12 @@ TOOLS = [
                 },
                 "enable_snapshot": {
                     "type": "boolean",
-                    "description": "Enable pyte screen buffer for snapshot reads",
+                    "description": "Deprecated: snapshot is now always enabled. Kept for backward compatibility.",
                     "default": False,
                 },
                 "scrollback_lines": {
                     "type": "integer",
-                    "description": "Number of scrollback history lines to keep (requires enable_snapshot)",
+                    "description": "Number of scrollback history lines to keep",
                     "default": 1000,
                 },
             },
@@ -176,8 +176,8 @@ TOOLS = [
     Tool(
         name="session_read",
         description=(
-            "Read output from a session. Stream mode waits for output to settle; "
-            "snapshot mode returns the current terminal screen (requires enable_snapshot=true)."
+            "Read output from a session. Mode 'auto' (default) auto-detects TUI applications "
+            "and switches between stream and snapshot. 'diff' returns only changed screen lines."
         ),
         inputSchema={
             "type": "object",
@@ -188,9 +188,9 @@ TOOLS = [
                 },
                 "mode": {
                     "type": "string",
-                    "description": "Read mode: 'stream' (default) or 'snapshot'",
-                    "enum": ["stream", "snapshot"],
-                    "default": "stream",
+                    "description": "Read mode: 'auto' (default, auto-selects stream/snapshot), 'stream', 'snapshot', or 'diff'",
+                    "enum": ["stream", "snapshot", "auto", "diff"],
+                    "default": "auto",
                 },
                 "timeout": {
                     "type": "number",
@@ -205,6 +205,11 @@ TOOLS = [
                 "scrollback": {
                     "type": "integer",
                     "description": "Lines of scrollback history to include (snapshot mode only)",
+                },
+                "truncation": {
+                    "type": "string",
+                    "description": "Truncation mode: 'tail' (keep beginning), 'head_tail' (keep beginning+end), 'tail_only' (keep end), 'none' (no truncation)",
+                    "enum": ["tail", "head_tail", "tail_only", "none"],
                 },
             },
             "required": ["session_id"],
@@ -266,6 +271,11 @@ TOOLS = [
                     "description": "Terminal width in columns",
                     "default": 80,
                 },
+                "truncation": {
+                    "type": "string",
+                    "description": "Truncation mode for output",
+                    "enum": ["tail", "head_tail", "tail_only", "none"],
+                },
             },
             "required": ["exec"],
         },
@@ -281,6 +291,11 @@ TOOLS = [
                 "pattern": {"type": "string", "description": "Regex pattern to wait for in output"},
                 "timeout": {"type": "number", "description": "Max seconds to wait", "default": 30.0},
                 "strip_ansi": {"type": "boolean", "description": "Strip ANSI escape sequences", "default": True},
+                "truncation": {
+                    "type": "string",
+                    "description": "Truncation mode for output",
+                    "enum": ["tail", "head_tail", "tail_only", "none"],
+                },
             },
             "required": ["session_id", "pattern"],
         },
@@ -302,6 +317,16 @@ TOOLS = [
                 "timeout": {"type": "number", "description": "Seconds to wait for output", "default": 5.0},
                 "strip_ansi": {"type": "boolean", "description": "Strip ANSI sequences", "default": True},
                 "confirmed": {"type": "boolean", "description": "Set to true to bypass dangerous command gate"},
+                "read_mode": {
+                    "type": "string",
+                    "description": "Read mode for output: 'stream' (default), 'snapshot', 'auto', 'diff'",
+                    "enum": ["stream", "snapshot", "auto", "diff"],
+                },
+                "truncation": {
+                    "type": "string",
+                    "description": "Truncation mode for output",
+                    "enum": ["tail", "head_tail", "tail_only", "none"],
+                },
             },
             "required": ["session_id"],
         },

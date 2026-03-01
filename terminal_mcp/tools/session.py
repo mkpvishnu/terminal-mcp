@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 from terminal_mcp.pty_session import KEY_MAP
-from terminal_mcp.output_buffer import strip_ansi, truncate_output
+from terminal_mcp.output_buffer import strip_ansi, truncate_output, truncate_output_smart
 from terminal_mcp.config import get_config
 
 if TYPE_CHECKING:
@@ -50,6 +50,7 @@ async def handle_session_create(manager: "SessionManager", arguments: dict) -> d
             "label": session.label,
             "pid": session.pid,
             "created_at": session.created_at,
+            "snapshot_available": True,
         }
     except RuntimeError as e:
         return {
@@ -191,13 +192,28 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
             "error": {"type": "not_found", "message": str(e)},
         }
 
-    mode = arguments.get("mode", "stream")
+    mode = arguments.get("mode", "auto")
     timeout = float(arguments.get("timeout", 2.0))
     strip_ansi_output = arguments.get("strip_ansi", True)
     scrollback = arguments.get("scrollback")
+    truncation = arguments.get("truncation")  # None means use config default
 
     try:
-        if mode == "snapshot":
+        mode_used = mode  # track actual mode used
+        if mode == "auto":
+            output, bytes_read, prompt_detected, mode_used = await asyncio.to_thread(
+                session.read_auto, timeout=timeout, strip_ansi_output=strip_ansi_output
+            )
+            total_lines = None
+        elif mode == "diff":
+            output, bytes_read, changed_lines, is_first_read = await asyncio.to_thread(
+                session.read_diff
+            )
+            if strip_ansi_output:
+                output = strip_ansi(output)
+            prompt_detected = False
+            total_lines = None
+        elif mode == "snapshot":
             if scrollback is not None:
                 output, total_lines = await asyncio.to_thread(
                     session.read_scrollback, lines_back=scrollback
@@ -213,16 +229,21 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
                 if strip_ansi_output:
                     output = strip_ansi(output)
                 total_lines = None
-        else:
+        else:  # "stream"
             output, bytes_read, prompt_detected = await asyncio.to_thread(
                 session.read_stream,
                 timeout=timeout,
                 strip_ansi_output=strip_ansi_output,
             )
             total_lines = None
+            mode_used = "stream"
 
-        # Apply output truncation (Feature 1)
-        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+        # Apply truncation
+        trunc_mode = truncation if truncation is not None else get_config().truncation_mode
+        if trunc_mode == "none":
+            was_truncated = False
+        else:
+            output, was_truncated = truncate_output_smart(output, get_config().max_output_bytes, mode=trunc_mode)
 
         result = {
             "success": True,
@@ -231,7 +252,13 @@ async def handle_session_read(manager: "SessionManager", arguments: dict) -> dic
             "prompt_detected": prompt_detected,
             "is_alive": session.is_alive,
             "truncated": was_truncated,
+            "tui_active": session._tui_active,
+            "snapshot_available": True,
+            "mode_used": mode_used,
         }
+        if mode == "diff":
+            result["changed_lines"] = changed_lines
+            result["is_first_read"] = is_first_read
         # Add OSC 133 info if supported
         if getattr(session, '_osc133_supported', False):
             result["osc133"] = True
@@ -390,7 +417,12 @@ async def handle_session_exec(manager: "SessionManager", arguments: dict) -> dic
             session.read_stream, timeout
         )
 
-        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+        truncation = arguments.get("truncation")
+        trunc_mode = truncation if truncation is not None else get_config().truncation_mode
+        if trunc_mode == "none":
+            was_truncated = False
+        else:
+            output, was_truncated = truncate_output_smart(output, get_config().max_output_bytes, mode=trunc_mode)
 
         return {
             "success": True,
@@ -458,6 +490,7 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
     timeout = float(arguments.get("timeout", 5.0))
     strip_ansi_flag = arguments.get("strip_ansi", True)
     confirmed = arguments.get("confirmed", False)
+    read_mode = arguments.get("read_mode")
 
     # Mutual exclusivity check
     provided = sum(x is not None for x in (input_text, control_char, key, password))
@@ -527,6 +560,9 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
                 bytes_sent = await asyncio.to_thread(session.send, "", press_enter=True)
 
         # Now read
+        # wait_for always overrides read_mode — explicit pattern takes priority
+        mode_used = None
+        changed_lines = None
         if wait_for is not None:
             output, bytes_read, matched, prompt_detected = await asyncio.to_thread(
                 session.read_until_pattern,
@@ -534,7 +570,32 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
                 timeout=timeout,
                 strip_ansi_output=strip_ansi_flag,
             )
+        elif read_mode == "auto":
+            output, bytes_read, prompt_detected, mode_used = await asyncio.to_thread(
+                session.read_auto,
+                timeout=timeout,
+                strip_ansi_output=strip_ansi_flag,
+            )
+            matched = None
+        elif read_mode == "snapshot":
+            output, bytes_read, prompt_detected = await asyncio.to_thread(
+                session.read_snapshot,
+            )
+            if strip_ansi_flag:
+                output = strip_ansi(output)
+            matched = None
+            mode_used = "snapshot"
+        elif read_mode == "diff":
+            output, bytes_read, changed_lines, is_first_read = await asyncio.to_thread(
+                session.read_diff,
+            )
+            if strip_ansi_flag:
+                output = strip_ansi(output)
+            prompt_detected = False
+            matched = None
+            mode_used = "diff"
         else:
+            # None or "stream" → default stream behavior
             output, bytes_read, prompt_detected = await asyncio.to_thread(
                 session.read_stream,
                 timeout=timeout,
@@ -542,7 +603,12 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
             )
             matched = None
 
-        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+        truncation = arguments.get("truncation")
+        trunc_mode = truncation if truncation is not None else get_config().truncation_mode
+        if trunc_mode == "none":
+            was_truncated = False
+        else:
+            output, was_truncated = truncate_output_smart(output, get_config().max_output_bytes, mode=trunc_mode)
 
         result = {
             "success": True,
@@ -552,9 +618,16 @@ async def handle_session_interact(manager: "SessionManager", arguments: dict) ->
             "prompt_detected": prompt_detected,
             "is_alive": session.is_alive,
             "truncated": was_truncated,
+            "tui_active": session._tui_active,
+            "snapshot_available": True,
         }
         if matched is not None:
             result["matched"] = matched
+        if mode_used is not None:
+            result["mode_used"] = mode_used
+        if changed_lines is not None:
+            result["changed_lines"] = changed_lines
+            result["is_first_read"] = is_first_read
 
         # Add OSC 133 info if supported
         if getattr(session, '_osc133_supported', False):
@@ -624,7 +697,12 @@ async def handle_session_wait_for(manager: "SessionManager", arguments: dict) ->
             strip_ansi_output=strip_ansi_output,
         )
 
-        output, was_truncated = truncate_output(output, get_config().max_output_bytes)
+        truncation = arguments.get("truncation")
+        trunc_mode = truncation if truncation is not None else get_config().truncation_mode
+        if trunc_mode == "none":
+            was_truncated = False
+        else:
+            output, was_truncated = truncate_output_smart(output, get_config().max_output_bytes, mode=trunc_mode)
 
         result = {
             "success": True,

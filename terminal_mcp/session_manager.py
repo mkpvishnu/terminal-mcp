@@ -99,6 +99,8 @@ class SessionManager:
                 "created_at": s.created_at,
                 "last_activity": s.last_activity,
                 "idle_seconds": round(s.idle_seconds, 1),
+                "tui_active": s._tui_active,
+                "snapshot_available": True,
             }
             for s in sessions
         ]
