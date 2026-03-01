@@ -482,12 +482,14 @@ class TestHandleSessionClose:
 
     @pytest.mark.asyncio
     async def test_close_not_found(self, mock_manager):
+        # session_close is now idempotent: closing an already-gone session
+        # returns success with already_closed=True (Issue #8 fix).
         from terminal_mcp.tools.session import handle_session_close
         mock_manager.close.side_effect = KeyError("Session not found: bad-id")
 
         result = await handle_session_close(mock_manager, {"session_id": "bad-id"})
-        assert result["success"] is False
-        assert result["error"]["type"] == "not_found"
+        assert result["success"] is True
+        assert result.get("already_closed") is True
 
 
 # ---------------------------------------------------------------------------
