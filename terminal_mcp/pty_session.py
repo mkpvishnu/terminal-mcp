@@ -535,7 +535,7 @@ class PTYSession:
     @property
     def is_alive(self) -> bool:
         """Whether the underlying process is still running."""
-        return self.process.isalive()
+        return self._is_alive()
 
     @property
     def pid(self) -> int:

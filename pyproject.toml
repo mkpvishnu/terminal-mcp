@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "terminal-mcp"
-version = "0.4.1"
+version = "0.4.2"
 description = "MCP server for interactive terminal sessions (SSH, REPLs, database CLIs)"
 authors = [{name = "mkpvishnu"}]
 license = {text = "MIT"}

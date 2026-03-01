@@ -489,6 +489,10 @@ Per-session overrides for `rows`, `cols`, and `idle_timeout` can be passed to `s
 
 ## Changelog
 
+### v0.4.2
+
+- **Fix `is_alive` race on Linux** — `is_alive` property now uses exception-safe `_is_alive()` internally, preventing `PtyProcessError` when child processes exit before `waitpid` can reap them. Fixes flaky CI failures on Linux runners
+
 ### v0.4.1
 
 - **Auto TUI detection** — automatically detects alternate screen buffer sequences (`ESC[?1049h`, `ESC[?47h`, `ESC[?1047h`) and switches `session_read` to snapshot mode. New `mode="auto"` is now the default
