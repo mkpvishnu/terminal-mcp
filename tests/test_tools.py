@@ -27,6 +27,11 @@ def mock_session():
     session.created_at = time.time()
     session.last_activity = time.time()
     session.idle_seconds = 0.0
+    session._osc133_supported = False
+    session._command_state = "idle"
+    session._last_exit_code = None
+    session._last_command_finished = False
+    session._tui_active = False
     return session
 
 
@@ -316,7 +321,7 @@ class TestHandleSessionRead:
         mock_session.read_stream.return_value = ("hello output\n", 13, True)
 
         result = await handle_session_read(
-            mock_manager, {"session_id": "abcd1234"}
+            mock_manager, {"session_id": "abcd1234", "mode": "stream"}
         )
         assert result["success"] is True
         assert result["output"] == "hello output\n"
@@ -363,7 +368,7 @@ class TestHandleSessionRead:
 
         await handle_session_read(
             mock_manager,
-            {"session_id": "abcd1234", "timeout": 5.0, "strip_ansi": False},
+            {"session_id": "abcd1234", "mode": "stream", "timeout": 5.0, "strip_ansi": False},
         )
         mock_session.read_stream.assert_called_once_with(timeout=5.0, strip_ansi_output=False)
 
@@ -374,7 +379,7 @@ class TestHandleSessionRead:
         mock_session.read_stream.return_value = ("short output", 12, False)
 
         result = await handle_session_read(
-            mock_manager, {"session_id": "abcd1234"}
+            mock_manager, {"session_id": "abcd1234", "mode": "stream"}
         )
         assert result["success"] is True
         assert result["truncated"] is False
@@ -388,7 +393,7 @@ class TestHandleSessionRead:
         mock_session.read_stream.return_value = (large_output, 200_000, False)
 
         result = await handle_session_read(
-            mock_manager, {"session_id": "abcd1234"}
+            mock_manager, {"session_id": "abcd1234", "mode": "stream"}
         )
         assert result["success"] is True
         assert result["truncated"] is True

@@ -41,4 +41,7 @@ def mock_pty_session():
     session.last_activity = 1_700_000_000.0
     session.idle_seconds = 0.0
     session.enable_snapshot = False
+    session._tui_active = False
+    session._alt_screen_entered = False
+    session._prev_snapshot = None
     return session
