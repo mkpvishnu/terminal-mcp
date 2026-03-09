@@ -569,6 +569,11 @@ TERMINAL_MCP_MAX_SESSIONS=20 TERMINAL_MCP_SAFETY_GATE=off uvx terminal-mcp
 
 ## Changelog
 
+### v0.4.6
+
+- **Bump actions/github-script from 7 to 8** ([#14](https://github.com/mkpvishnu/terminal-mcp/pull/14))
+
+
 ### v0.4.5
 
 - **Remove stale publish.yml workflow** ([#13](https://github.com/mkpvishnu/terminal-mcp/pull/13))
