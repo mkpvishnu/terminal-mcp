@@ -1,7 +1,9 @@
-"""PTY session: wraps pexpect.spawn with a background reader thread and optional pyte screen."""
+"""PTY session: wraps pexpect.spawn (or PopenSpawn on Windows) with a background reader thread and optional pyte screen."""
 
+import os
 import re
 import signal
+import sys
 import threading
 import time
 import uuid
@@ -9,6 +11,11 @@ from typing import Optional
 
 import pexpect
 import pyte
+
+IS_WINDOWS = sys.platform == "win32"
+
+if IS_WINDOWS:
+    from pexpect.popen_spawn import PopenSpawn
 
 from terminal_mcp.output_buffer import strip_ansi, detect_prompt
 
@@ -72,13 +79,21 @@ class PTYSession:
         self._last_exit_code: Optional[int] = None
         self._command_state: str = "idle"  # "idle" | "prompt" | "running" | "output"
 
-        # Spawn the PTY process via pexpect
-        self.process = pexpect.spawn(
-            command,
-            dimensions=(rows, cols),
-            encoding=None,   # binary mode – we decode manually
-            timeout=None,
-        )
+        self._is_windows = IS_WINDOWS
+
+        if IS_WINDOWS:
+            self.process = PopenSpawn(
+                command,
+                encoding=None,
+                timeout=None,
+            )
+        else:
+            self.process = pexpect.spawn(
+                command,
+                dimensions=(rows, cols),
+                encoding=None,   # binary mode – we decode manually
+                timeout=None,
+            )
 
         # Stream buffer: bytes accumulated by the background reader
         self._buffer: bytearray = bytearray()
@@ -250,8 +265,13 @@ class PTYSession:
         return len(password.encode()) + 1  # +1 for \r
 
     def resize(self, rows: int, cols: int) -> None:
-        """Resize the PTY window. Sends SIGWINCH to the child process."""
-        self.process.setwinsize(rows, cols)
+        """Resize the PTY window. Sends SIGWINCH to the child process.
+
+        On Windows (PopenSpawn), PTY resize is not supported — only the
+        internal pyte screen dimensions are updated.
+        """
+        if not self._is_windows:
+            self.process.setwinsize(rows, cols)
         self.rows = rows
         self.cols = cols
         self._screen.resize(rows, cols)
@@ -534,6 +554,8 @@ class PTYSession:
     def _is_alive(self) -> bool:
         """Check if process is alive, returning False if already reaped."""
         try:
+            if self._is_windows:
+                return self.process.proc.poll() is None
             return self.process.isalive()
         except Exception:
             return False
@@ -542,7 +564,8 @@ class PTYSession:
         """
         Gracefully shut down the session.
 
-        Sequence: EOF → 2s wait → SIGHUP → 2s wait → SIGKILL.
+        Unix sequence: EOF → 2s wait → SIGHUP → 2s wait → SIGKILL.
+        Windows sequence: EOF → 2s wait → terminate → 2s wait → kill.
         Returns the exit status code (or None if unavailable).
         """
         try:
@@ -558,7 +581,10 @@ class PTYSession:
 
         if self._is_alive():
             try:
-                self.process.kill(signal.SIGHUP)
+                if self._is_windows:
+                    self.process.proc.terminate()
+                else:
+                    self.process.kill(signal.SIGHUP)
             except Exception:
                 pass
             for _ in range(20):
@@ -573,9 +599,13 @@ class PTYSession:
                 pass
             time.sleep(0.5)
 
-        exit_status = self.process.exitstatus
+        if self._is_windows:
+            exit_status = self.process.proc.returncode
+        else:
+            exit_status = self.process.exitstatus
         try:
-            self.process.close(force=True)
+            if not self._is_windows:
+                self.process.close(force=True)
         except Exception:
             pass
         return exit_status
@@ -592,6 +622,8 @@ class PTYSession:
     @property
     def pid(self) -> int:
         """PID of the spawned process."""
+        if self._is_windows:
+            return self.process.proc.pid
         return self.process.pid
 
     @property

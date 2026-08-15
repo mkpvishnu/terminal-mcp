@@ -504,7 +504,7 @@ class TestOSC133Parsing:
         mock_session._osc133_supported = False
         mock_session.read_stream.return_value = ("out", 3, False)
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             handle_session_read(mock_manager, {"session_id": "abcd1234"})
         )
         assert "osc133" not in result
