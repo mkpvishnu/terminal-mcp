@@ -125,6 +125,23 @@ class TestHandleSessionWaitFor:
         assert "is_alive" in result
 
     @pytest.mark.asyncio
+    async def test_wait_for_uses_absolute_start_position(self, mock_manager, mock_session):
+        """session_wait_for must snapshot current_buffer_end and pass it as start_position."""
+        from terminal_mcp.tools.session import handle_session_wait_for
+        mock_manager.get.return_value = mock_session
+        mock_session.current_buffer_end.return_value = 500
+        mock_session.read_until_pattern.return_value = ("output\n$ ", 9, True, True)
+
+        result = await handle_session_wait_for(
+            mock_manager,
+            {"session_id": "abcd1234", "pattern": r"\$"}
+        )
+        assert result["success"] is True
+        mock_session.current_buffer_end.assert_called_once()
+        call_kwargs = mock_session.read_until_pattern.call_args[1]
+        assert call_kwargs["start_position"] == 500
+
+    @pytest.mark.asyncio
     async def test_truncation_applied(self, mock_manager, mock_session):
         from terminal_mcp.tools.session import handle_session_wait_for
         mock_manager.get.return_value = mock_session
@@ -142,6 +159,7 @@ class TestHandleSessionWaitFor:
     async def test_passes_timeout_and_strip_ansi(self, mock_manager, mock_session):
         from terminal_mcp.tools.session import handle_session_wait_for
         mock_manager.get.return_value = mock_session
+        mock_session.current_buffer_end.return_value = 0
         mock_session.read_until_pattern.return_value = ("out", 3, True, False)
 
         await handle_session_wait_for(
@@ -152,6 +170,7 @@ class TestHandleSessionWaitFor:
             pattern=r"out",
             timeout=10.0,
             strip_ansi_output=False,
+            start_position=0,
         )
 
     @pytest.mark.asyncio
