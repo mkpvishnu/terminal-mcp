@@ -1,6 +1,5 @@
 """PTY session: wraps pexpect.spawn (or PopenSpawn on Windows) with a background reader thread and optional pyte screen."""
 
-import os
 import re
 import signal
 import sys
@@ -594,7 +593,10 @@ class PTYSession:
 
         if self._is_alive():
             try:
-                self.process.kill(signal.SIGKILL)
+                if self._is_windows:
+                    self.process.proc.kill()
+                else:
+                    self.process.kill(signal.SIGKILL)
             except Exception:
                 pass
             time.sleep(0.5)

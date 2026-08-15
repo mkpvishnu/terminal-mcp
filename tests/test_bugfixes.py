@@ -1,6 +1,7 @@
 """Regression tests for bug fixes (Issues #6, #7, #8, #9)."""
 
 import asyncio
+import signal
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import time
@@ -405,3 +406,72 @@ class TestReadUntilPatternStartPosition:
                 f"Pre-anchor bytes must not appear in output after trim, got: {text!r}"
             )
             assert "DONE" in text, f"Post-anchor content must be present, got: {text!r}"
+
+
+# ---------------------------------------------------------------------------
+# Bug #21 — Windows close() uses proc.kill() instead of signal.SIGKILL
+# ---------------------------------------------------------------------------
+
+class TestWindowsCloseFallback:
+    """Issue #21: close() must use proc.terminate()/proc.kill() on Windows."""
+
+    def _make_session(self, *, is_windows: bool):
+        """Build a minimally-initialised PTYSession with controlled _is_windows."""
+        import threading
+        from terminal_mcp.pty_session import PTYSession
+
+        session = PTYSession.__new__(PTYSession)
+        session._is_windows = is_windows
+        session._buffer = bytearray()
+        session._buffer_lock = threading.Lock()
+        session._read_position = 0
+        session._total_bytes_written = 0
+        session._tui_active = False
+        session._alt_screen_entered = False
+        session._prev_snapshot = None
+        session._osc133_supported = False
+        session._command_state = "idle"
+        session._last_exit_code = None
+        session._last_command_finished = False
+        return session
+
+    def test_windows_close_calls_proc_terminate_then_kill(self):
+        """On Windows, close() should call proc.terminate() and proc.kill()."""
+        session = self._make_session(is_windows=True)
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_process = MagicMock()
+        mock_process.proc = mock_proc
+        mock_process.sendeof.side_effect = Exception("no EOF on Windows")
+        session.process = mock_process
+
+        # Simulate process staying alive through terminate, dying after kill
+        alive_calls = [True] * 42 + [False]
+        session._is_alive = MagicMock(side_effect=alive_calls)
+
+        exit_status = session.close()
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.kill.assert_called_once()
+        assert exit_status == 0
+        mock_process.close.assert_not_called()
+
+    def test_unix_close_calls_signal_kill(self):
+        """On Unix, close() should use signal.SIGHUP / signal.SIGKILL."""
+        session = self._make_session(is_windows=False)
+
+        mock_process = MagicMock()
+        mock_process.exitstatus = 1
+        mock_process.sendeof.side_effect = Exception("test")
+        session.process = mock_process
+
+        alive_calls = [True] * 42 + [False]
+        session._is_alive = MagicMock(side_effect=alive_calls)
+
+        exit_status = session.close()
+
+        mock_process.kill.assert_any_call(signal.SIGHUP)
+        mock_process.kill.assert_any_call(signal.SIGKILL)
+        mock_process.close.assert_called_once_with(force=True)
+        assert exit_status == 1
