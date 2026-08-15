@@ -51,18 +51,26 @@ class SessionManager:
                 raise RuntimeError(
                     f"Maximum number of sessions ({self.config.max_sessions}) reached"
                 )
-            session = PTYSession(
-                command=command,
-                label=label,
-                rows=rows,
-                cols=cols,
-                enable_snapshot=enable_snapshot,
-                scrollback_lines=scrollback_lines,
-                max_buffer_bytes=self.config.max_buffer_bytes,
-            )
-            # Store optional per-session idle timeout
-            if idle_timeout is not None:
-                session._idle_timeout_override = idle_timeout
+
+        session = PTYSession(
+            command=command,
+            label=label,
+            rows=rows,
+            cols=cols,
+            enable_snapshot=enable_snapshot,
+            scrollback_lines=scrollback_lines,
+            max_buffer_bytes=self.config.max_buffer_bytes,
+        )
+
+        if idle_timeout is not None:
+            session._idle_timeout_override = idle_timeout
+
+        with self._lock:
+            if len(self._sessions) >= self.config.max_sessions:
+                session.close()
+                raise RuntimeError(
+                    f"Maximum number of sessions ({self.config.max_sessions}) reached"
+                )
             self._sessions[session.session_id] = session
             logger.info("Session %s created: %s (pid=%s)", session.session_id, command, session.pid)
             return session

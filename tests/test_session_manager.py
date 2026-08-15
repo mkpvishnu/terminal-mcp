@@ -1,6 +1,7 @@
 """Tests for SessionManager."""
 
 import sys
+import threading
 import time
 import pytest
 from unittest.mock import patch, MagicMock
@@ -102,3 +103,86 @@ class TestSessionManagerCreate:
         assert len(manager.list_sessions()) == 2
         manager.close_all()
         assert len(manager.list_sessions()) == 0
+
+
+class TestSessionManagerLockDuringSpawn:
+    """Issue #22: create() must not hold the lock during PTYSession construction."""
+
+    def test_lock_not_held_during_pty_construction(self):
+        """Other operations must not be blocked while a session is spawning."""
+        config = TerminalConfig(
+            max_sessions=5,
+            idle_timeout=60,
+            default_rows=24,
+            default_cols=80,
+            read_settle_timeout=0.2,
+            max_output_bytes=10_000,
+            cleanup_interval=9999,
+        )
+        mgr = SessionManager(config)
+
+        spawn_started = threading.Event()
+        lock_acquired = threading.Event()
+
+        original_init = None
+
+        def slow_pty_init(self_pty, *args, **kwargs):
+            spawn_started.set()
+            lock_acquired.wait(timeout=5)
+            original_init(self_pty, *args, **kwargs)
+
+        try:
+            from terminal_mcp.pty_session import PTYSession
+            original_init = PTYSession.__init__
+
+            with patch.object(PTYSession, '__init__', slow_pty_init):
+                create_thread = threading.Thread(
+                    target=lambda: mgr.create(command="/bin/echo hi"),
+                )
+                create_thread.start()
+
+                spawn_started.wait(timeout=5)
+                assert spawn_started.is_set(), "PTYSession init never started"
+
+                acquired = mgr._lock.acquire(timeout=2)
+                if acquired:
+                    lock_acquired.set()
+                    mgr._lock.release()
+                else:
+                    lock_acquired.set()
+                    create_thread.join(timeout=5)
+                    pytest.fail("Lock was held during PTYSession construction")
+
+                create_thread.join(timeout=10)
+        finally:
+            mgr.close_all()
+
+    def test_max_sessions_race_cleans_up(self):
+        """If max_sessions is hit between pre-check and registration, the
+        spawned session is closed and RuntimeError is raised."""
+        config = TerminalConfig(
+            max_sessions=1,
+            idle_timeout=60,
+            default_rows=24,
+            default_cols=80,
+            read_settle_timeout=0.2,
+            max_output_bytes=10_000,
+            cleanup_interval=9999,
+        )
+        mgr = SessionManager(config)
+
+        mock_session = MagicMock()
+        mock_session.session_id = "race-sess"
+
+        def pty_side_effect(*args, **kwargs):
+            mgr._sessions["snuck-in"] = MagicMock()
+            return mock_session
+
+        with patch("terminal_mcp.session_manager.PTYSession", side_effect=pty_side_effect):
+            with pytest.raises(RuntimeError, match="Maximum number of sessions"):
+                mgr.create(command="/bin/echo hi")
+
+            mock_session.close.assert_called_once()
+            assert "race-sess" not in mgr._sessions
+
+        mgr._sessions.clear()
