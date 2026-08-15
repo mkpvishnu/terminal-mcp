@@ -716,11 +716,13 @@ async def handle_session_wait_for(manager: "SessionManager", arguments: dict) ->
     strip_ansi_output = arguments.get("strip_ansi", True)
 
     try:
+        start_pos = await asyncio.to_thread(session.current_buffer_end)
         output, bytes_read, matched, prompt_detected = await asyncio.to_thread(
             session.read_until_pattern,
             pattern=pattern,
             timeout=timeout,
             strip_ansi_output=strip_ansi_output,
+            start_position=start_pos,
         )
 
         truncation = arguments.get("truncation")
