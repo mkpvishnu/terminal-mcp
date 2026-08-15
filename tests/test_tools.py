@@ -693,3 +693,30 @@ class TestHandleSessionExec:
         assert result["success"] is True
         assert result["truncated"] is True
         assert "[output truncated]" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_exec_blocks_dangerous_command(self, mock_manager):
+        from terminal_mcp.tools.session import handle_session_exec
+        result = await handle_session_exec(
+            mock_manager, {"exec": "rm -rf /important"}
+        )
+        assert result["success"] is False
+        assert result["requires_confirmation"] is True
+        assert result["command"] == "rm -rf /important"
+        mock_manager.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exec_allows_dangerous_command_when_confirmed(self, mock_manager, mock_session):
+        from terminal_mcp.tools.session import handle_session_exec
+        mock_manager.create.return_value = mock_session
+        mock_session.read_stream.side_effect = [
+            ("$ ", 2, True),
+            ("removed\n$ ", 11, True),
+        ]
+        mock_session.send.return_value = 15
+
+        result = await handle_session_exec(
+            mock_manager, {"exec": "rm -rf /important", "confirmed": True}
+        )
+        assert result["success"] is True
+        mock_manager.create.assert_called_once()
