@@ -396,6 +396,18 @@ async def handle_session_exec(manager: "SessionManager", arguments: dict) -> dic
             "error": {"type": "validation_error", "message": "'exec' is required"},
         }
 
+    if not arguments.get("confirmed", False):
+        from terminal_mcp.safety import check_dangerous
+        danger_reason = check_dangerous(exec_cmd)
+        if danger_reason:
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "command": exec_cmd,
+                "reason": danger_reason,
+                "message": "This command matches a dangerous pattern. Resend with confirmed=true to execute.",
+            }
+
     shell = arguments.get("command", "bash")
     timeout = float(arguments.get("timeout", 5.0))
     rows = arguments.get("rows", 24)
