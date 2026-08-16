@@ -1,5 +1,6 @@
 """PTY session: wraps pexpect.spawn (or PopenSpawn on Windows) with a background reader thread and optional pyte screen."""
 
+import os
 import re
 import signal
 import sys
