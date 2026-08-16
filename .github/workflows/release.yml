@@ -81,10 +81,13 @@ jobs:
           # 1. pyproject.toml — update version string
           sed -i "s/^version = \".*\"/version = \"$NEW_VERSION\"/" pyproject.toml
 
-          # 2. banner.svg — update version in bottom text
+          # 2. __init__.py — update __version__
+          sed -i "s/^__version__ = \".*\"/__version__ = \"$NEW_VERSION\"/" terminal_mcp/__init__.py
+
+          # 3. banner.svg — update version in bottom text
           sed -i "s/v[0-9]*\.[0-9]*\.[0-9]*/v$NEW_VERSION/" assets/banner.svg
 
-          # 3. server.json — update both version fields using python3 for safe JSON handling
+          # 4. server.json — update both version fields using python3 for safe JSON handling
           python3 - "$NEW_VERSION" <<'PYEOF'
           import json, sys
           v = sys.argv[1]
@@ -98,7 +101,7 @@ jobs:
               f.write("\n")
           PYEOF
 
-          # 4. docs/changelog.md — insert changelog entry after "# Changelog" heading
+          # 5. docs/changelog.md — insert changelog entry after "# Changelog" heading
           python3 <<'PYEOF'
           import os, sys
           version = os.environ["NEW_VERSION"]
@@ -128,13 +131,13 @@ jobs:
               f.write(content)
           PYEOF
 
-          echo "Bumped: pyproject.toml, banner.svg, server.json, docs/changelog.md"
+          echo "Bumped: pyproject.toml, __init__.py, banner.svg, server.json, docs/changelog.md"
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml assets/banner.svg server.json docs/changelog.md
+          git add pyproject.toml terminal_mcp/__init__.py assets/banner.svg server.json docs/changelog.md
           git commit -m "release: v${{ steps.version.outputs.new_version }}"
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
           git push origin main --follow-tags
