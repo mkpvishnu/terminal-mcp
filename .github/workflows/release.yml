@@ -98,34 +98,43 @@ jobs:
               f.write("\n")
           PYEOF
 
-          # 4. README.md — insert changelog entry after "## Changelog" heading
+          # 4. docs/changelog.md — insert changelog entry after "# Changelog" heading
           python3 <<'PYEOF'
           import os, sys
           version = os.environ["NEW_VERSION"]
           title = os.environ["PR_TITLE"]
           number = os.environ["PR_NUMBER"]
           url = os.environ["PR_URL"]
-          entry = f"\n### v{version}\n\n- **{title}** ([#{number}]({url}))\n"
-          with open("README.md", "r") as f:
+          entry = f"\n## v{version}\n\n- **{title}** ([#{number}]({url}))\n"
+          changelog = "docs/changelog.md"
+          with open(changelog, "r") as f:
               content = f.read()
-          marker = "## Changelog"
+          marker = "# Changelog"
           idx = content.find(marker)
           if idx == -1:
-              print("WARNING: '## Changelog' not found in README.md")
+              print("WARNING: '# Changelog' not found in docs/changelog.md")
               sys.exit(0)
-          insert_at = idx + len(marker)
-          content = content[:insert_at] + "\n" + entry + content[insert_at:]
-          with open("README.md", "w") as f:
+          # Find end of the heading line
+          newline = content.find("\n", idx)
+          if newline == -1:
+              newline = len(content)
+          # Skip any blank lines after the heading
+          insert_at = newline
+          while insert_at < len(content) and content[insert_at] in ('\n', '\r'):
+              insert_at += 1
+          # Insert before the first existing entry
+          content = content[:newline] + "\n" + entry + "\n" + content[insert_at:]
+          with open(changelog, "w") as f:
               f.write(content)
           PYEOF
 
-          echo "Bumped: pyproject.toml, banner.svg, server.json, README.md"
+          echo "Bumped: pyproject.toml, banner.svg, server.json, docs/changelog.md"
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml assets/banner.svg server.json README.md
+          git add pyproject.toml assets/banner.svg server.json docs/changelog.md
           git commit -m "release: v${{ steps.version.outputs.new_version }}"
           git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
           git push origin main --follow-tags
