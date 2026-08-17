@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.7
+
+- **chore: sync __init__.py version and add to release workflow** ([#29](https://github.com/mkpvishnu/terminal-mcp/pull/29))
+
 All notable changes to terminal-mcp are documented here.
 
 ---
