@@ -24,7 +24,7 @@ jobs:
       bump_type: ${{ steps.bump.outputs.type }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
@@ -179,7 +179,7 @@ jobs:
     environment: pypi
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.version-bump.outputs.tag }}
 
